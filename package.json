@@ -1,0 +1,31 @@
+{
+  "name": "poteto-omp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Lauren Tan's pstack methodology as an Oh My Pi package: skills, playbooks, role agents, and a routing extension",
+  "license": "MIT",
+  "keywords": ["omp-package", "pstack", "agents", "workflow"],
+  "omp": {
+    "extensions": ["./extension/pstack.ts"],
+    "skills": ["./skills"],
+    "agents": ["./agents"]
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "build:plugin": "bun scripts/build-plugin.ts",
+    "verify:generated": "bun scripts/verify-generated.ts",
+    "test:omp": "bun scripts/test-omp-plugin.ts",
+    "test:e2e": "bun tests/e2e/acceptance.ts"
+  },
+  "dependencies": {
+    "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "@oh-my-pi/pi-coding-agent": "18.1.10",
+    "commander": "14.0.0",
+    "@types/bun": "latest",
+    "typescript": "latest"
+  }
+}
