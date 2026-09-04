@@ -7,7 +7,7 @@
   "license": "MIT",
   "keywords": ["omp-package", "pstack", "agents", "workflow"],
   "omp": {
-    "extensions": ["./extension/pstack.ts"],
+    "extensions": ["./src/extension/index.ts"],
     "skills": ["./skills"],
     "agents": ["./agents"]
   },
@@ -17,7 +17,7 @@
     "build:plugin": "bun scripts/build-plugin.ts",
     "verify:generated": "bun scripts/verify-generated.ts",
     "test:omp": "bun scripts/test-omp-plugin.ts",
-    "test:e2e": "bun tests/e2e/acceptance.ts"
+    "test:e2e": "bun scripts/acceptance.ts"
   },
   "dependencies": {
     "yaml": "^2.8.1"
