@@ -3,10 +3,12 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
     "strict": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
     "types": ["bun"]
   },
-  "include": ["extension", "scripts", "tests", "src"]
+  "include": ["scripts", "tests", "src", "skills/poteto-mode/scripts"]
 }

@@ -10,7 +10,7 @@ Design before implementing. Sketch types, function signatures, class shapes, and
 
 ## Start
 
-Open a todolist with one entry per phase before starting (the `pstack_todo` extension tool when present, otherwise a markdown checklist in chat). Autonomous mode without checkpoints needs the list to show phase position and keep phases from silently disappearing.
+Open a todolist with one entry per phase before starting (OMP's `todo` tool). Autonomous mode without checkpoints needs the list to show phase position and keep phases from silently disappearing.
 
 1. Ground
 2. Sketch
@@ -28,9 +28,9 @@ Skip Phase A only when the work is genuinely greenfield with no surrounding syst
 
 ## Phase B: Sketch
 
-The arena launches each runner as a task spawn naming the matching `pstack-architect-runners-<n>` role agent returned by pstack_route, with models from the architect-runners seats bound by setup-pstack (see the arena skill for the fan-out mechanics and its inline fallback); runners are read-only sketch passes, so no isolation or gate is needed for them.
+The arena launches each runner as a task spawn naming the matching `pstack-architect-runners-<n>` role agent returned by pstack_route, with models from the architect-runners seats bound by setup-pstack (see the arena skill for the fan-out mechanics); runners are read-only sketch passes that return complete design packages in their results. They need no write isolation. The parent checks each sketch against the requested contract before synthesis.
 
-Use your configured architect runners (see the architect-runners seats bound by setup-pstack from the `modelRoles` entries in `~/.omp/agent/config.yml`; defaults span model families — never invent a model selector).
+Use your configured architect runners (resolve the architect-runners panel with `pstack_route`; setup defines the seats and models).
 
 Design it twice. Require at least two structurally distinct candidates before synthesis, even when the first looks sufficient. This is the **exhaust-the-design-space** principle skill made concrete. Whole-shape alternatives, not point fixes inside one shape.
 

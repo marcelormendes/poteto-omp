@@ -67,7 +67,6 @@ export function registerTranscriptTool(
   pi: ExtensionAPI,
   options: TranscriptToolOptions = {},
 ): void {
-  const sessionsRoot = options.sessionsRoot ?? defaultSessionsRoot();
   pi.registerTool({
     name: "pstack_transcripts",
     label: "Pstack transcripts",
@@ -77,6 +76,9 @@ export function registerTranscriptTool(
       "projectPath only when the user authorizes another project.",
     parameters: transcriptParamsSchema,
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
+      const defaultRoot = defaultSessionsRoot();
+      const sessionDir = ctx.sessionManager?.getSessionDir();
+      const sessionsRoot = options.sessionsRoot ?? (sessionDir && !resolve(sessionDir).startsWith(resolve(defaultRoot) + "/") ? sessionDir : defaultRoot);
       const scope =
         params.projectPath !== undefined && params.projectPath.trim() !== ""
           ? resolve(params.projectPath.trim())

@@ -12,7 +12,7 @@ Companion to the `how` skill. `how` answers what the code does and how it works.
 
 ## How this skill works
 
-Historical context spreads across seven evidence categories: source control history, issue or ticket tracking, long-form documents, real-time team chat, infrastructure observability, error or exception tracking, and product analytics warehouses. You cannot predict from the question alone which one holds the answer, so the skill enumerates available MCPs at run time, maps each to a category, runs one pass per available category — as a task-tool fan-out (one item per seat; the call is the barrier) when the role agents are installed, as inline sequential passes otherwise — then synthesizes with explicit confidence calibration. Null results from searched categories are first-class evidence about how the decision was made; report them alongside positive findings. The default is coverage, not minimalism.
+Historical context spreads across seven evidence categories: source control history, issue or ticket tracking, long-form documents, real-time team chat, infrastructure observability, error or exception tracking, and product analytics warehouses. You cannot predict from the question alone which one holds the answer, so the skill enumerates available MCPs at run time, maps each to a category, runs one pass per available category — as a task-tool fan-out (one item per category; await all jobs through `hub`) using the configured role agents — then synthesizes with explicit confidence calibration. Null results from searched categories are first-class evidence about how the decision was made; report them alongside positive findings. The default is coverage, not minimalism.
 
 ## Operating Posture
 
@@ -112,15 +112,9 @@ Map each available MCP to one evidence category:
 
 Source control is always available through git and `gh`. For the other six, classify using the MCP name, server instructions, tool names, and resource descriptors. If an MCP could fit more than one category, choose the one matching its primary evidence. Record ambiguous cases in the coverage map.
 
-Aim for a complete **coverage map**, not a minimal one. A null result from an issue tracker is evidence the decision was not ticketed, a useful fact in itself. Document the null, don't skip the search.
+Aim for a complete **coverage map**, not a minimal one. A null result from an issue tracker means the search found no ticket, a useful fact in itself. Document the null, don't skip the search.
 
-**Fan-out (default).** One investigator per matching category, via the task tool's batch form: a single call with `context` (the shared background) and `tasks`, one item per seat, each naming the `pstack-why-investigator` role agent. The call is the barrier; results return in input order. Each seat binds its model from the `modelRoles` entries in `~/.omp/agent/config.yml` (written by setup-pstack); fall back to the role's default; never invent a model selector. Every run is non-writing: it may call any tool, including the MCPs, but must not create, edit, commit, or otherwise mutate anything. Don't restrict a run's tool access — MCP-backed passes need it; keep the posture uniform across categories. One pass per category lets each specialize in one tool's query vocabulary and result shape; don't let one run cover multiple MCPs. Each `task` is the base prompt from `references/investigator-prompt.md` plus the category playbook, code anchor, and original question; keep every brief standalone, with the member-overlap rule: a category may record cross-source leads but must not chase them. Results come back in launch order, each with its PASS / ISSUES / BLOCKED status. A BLOCKED pass is recorded as a skipped source in the final "Sources Consulted," not as an empty result. Record which model ran which pass.
-
-**Inline passes (only when the role agents are not installed; run `setup-pstack` first).** Run the investigator passes sequentially, one per matching category, numbered, in this session. Each pass is a full block of work run to completion before the next starts (Pass 1, Pass 2, ...). One pass per category lets each specialize in one tool's query vocabulary and result shape. Don't let one pass cover multiple MCPs.
-
-Model and posture (each pass):
-- Model: the session model, since no role agent is bound; record which model ran which pass.
-- Non-writing. A pass may call any tool, including the MCPs, but must not create, edit, commit, or otherwise mutate anything. Don't restrict the pass's tool access — MCP-backed passes need it. The source control pass would be safe without write, but keep the posture uniform. Non-writing is a posture, not a sandbox.
+**Fan-out (default).** One investigator per matching category, via the task tool's batch form: a single call with `context` (the shared background) and `tasks`, one item per seat, each naming the `pstack-why-investigator` role agent. The task call may return job IDs immediately. Wait through `hub` for all launched jobs before synthesizing; match results by job ID, not completion order. Each seat binds its model from the `modelRoles` entries in `~/.omp/agent/config.yml` (written by setup-pstack); resolve the role with `pstack_route`; never invent a model selector. Every run is non-writing: it may call any tool, including the MCPs, but must not create, edit, commit, or otherwise mutate anything. Don't restrict a run's tool access — MCP-backed passes need it; keep the posture uniform across categories. One pass per category lets each specialize in one tool's query vocabulary and result shape; don't let one run cover multiple MCPs. Each `task` is the base prompt from `references/investigator-prompt.md` plus the category playbook, code anchor, and original question; keep every brief standalone, with the member-overlap rule: a category may record cross-source leads but must not chase them. Results come back in launch order, each with its PASS / ISSUES / BLOCKED status. A BLOCKED pass is recorded as a skipped source in the final "Sources Consulted," not as an empty result. Record which model ran which pass.
 
 Each pass gets:
 1. The base prompt from `references/investigator-prompt.md`
@@ -162,12 +156,9 @@ If your scope assessment suggests a single-commit trivial target where the PR de
 
 ## Step 4. Synthesize
 
-**Fan-out seat (default).** Launch the synthesizer as one task-tool item naming the `pstack-why-synthesizer` role agent; it binds its model from the `modelRoles` entries in `~/.omp/agent/config.yml` (written by setup-pstack; fall back to the role's default; never invent a model selector). Record the model. It runs non-writing: its quality check spot-verifies citations, which can require MCP access, so it may read the codebase and call MCP tools but must not create, edit, commit, or otherwise mutate anything — don't restrict its tool access, that defeats verification.
+**Fan-out seat (default).** Launch the synthesizer as one task-tool item naming the `pstack-why-synthesizer` role agent; it binds its model from the `modelRoles` entries in `~/.omp/agent/config.yml` (written by setup-pstack; resolve the role with `pstack_route`; never invent a model selector). Record the model. It runs non-writing: its quality check spot-verifies citations, which can require MCP access, so it may read the codebase and call MCP tools but must not create, edit, commit, or otherwise mutate anything — don't restrict its tool access, that defeats verification.
 
-**Fallback (used only when the role agents are not installed).** Run one synthesizer pass in this session:
-
-- Model: the session model; record it.
-- Non-writing: the synthesizer's quality check spot-verifies citations, which can require MCP access. The pass may read the codebase and call MCP tools, but must not create, edit, commit, or otherwise mutate anything. Don't restrict the pass's tool access — that defeats verification.
+If the configured agent is missing, run `/setup-pstack` before continuing. Do not count a parent-session imitation as the synthesizer model.
 
 The synthesizer pass gets:
 1. The pass findings, including any null results and any categories skipped with justification

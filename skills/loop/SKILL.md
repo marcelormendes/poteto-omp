@@ -23,7 +23,7 @@ Write down, before starting:
 - **Recovery:** what happens on a failed iteration (retry same unit, skip
   and note, abort the loop). Failed units never silently count as passed.
 
-Track the loop in the `pstack_todo` tool: one item per iteration or per
+Track the loop in the `todo` tool: one item per iteration or per
 batch, checked as each completes.
 
 ## 2. Run
@@ -35,7 +35,7 @@ with the predicate unmet, stop and report BLOCKED with the per-iteration
 evidence table, never run one more "just to check".
 
 Long-running loops that must survive this session belong in a scheduled
-runner (cron/launchd invoking `pi --no-session -p "/skill:loop <framing>"`),
+runner (cron/launchd invoking `omp --no-session -p "/skill:loop <framing>"`),
 not in a longer cap. Say so when the horizon exceeds the session.
 
 ## 3. Report

@@ -288,7 +288,7 @@ describe("listProjectSessions", () => {
 		try {
 			const rows = await listProjectSessions(root, projA, 1);
 			expect(rows).toHaveLength(1);
-			expect(rows[0].sessionId).toBe("sess-aaa");
+			expect(rows[0].sessionId).toBe("sess-mal");
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}

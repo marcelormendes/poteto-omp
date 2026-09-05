@@ -8,10 +8,10 @@
  */
 
 /** Immutable upstream pstack commit this port tracks. */
-export const UPSTREAM_COMMIT = "b9ddc83c32972210b8a94d389130713e8eed346e";
+export const UPSTREAM_COMMIT = "93b00b89ef425a9c1bac0d0b317dfc49c930ac99";
 
 /** Upstream pstack version recorded in the manifest at that commit. */
-export const UPSTREAM_PSTACK_VERSION = "0.14.5";
+export const UPSTREAM_PSTACK_VERSION = "0.14.8";
 
 /** Schema version for pstack config.yml and the generated-agents manifest. */
 export const PSTACK_SCHEMA_VERSION = 1;

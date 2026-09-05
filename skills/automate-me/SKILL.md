@@ -28,10 +28,10 @@ Update mode changes the rest of the flow:
 
 Find the active project's transcripts before reading. Use the `pstack_transcripts` tool (`list` to find this run's session tree, then `search` for the signals below), which is scoped to the current project by default; pass an explicit `projectPath` only when the user authorizes another project. Never read other projects' transcripts.
 
-Survey recent agent conversations within that scope for recurring patterns. Work through slices of history sequentially (e.g. last 2-4 weeks, split into 3 slices so each has enough material). Each slice pass reads the transcripts in its range, looks for the signals below, and returns a short structured list of patterns it saw with evidence pointers. Default signals worth hunting:
+Survey recent agent conversations within that scope for recurring patterns. Resolve `swarm-worker` with `pstack_route` and launch a native task batch across disjoint slices (e.g. last 2-4 weeks, split into 3 slices). Each worker receives only its project-scoped session IDs, reads without editing or isolation, looks for the signals below, and returns a short structured list of patterns it saw with evidence pointers. Collect every job through `hub` before synthesis. A supplied digest or only one or two sessions can be read directly. Default signals worth hunting:
 
 - Response preferences (length, tone, format, "dumb it down" corrections)
-- Delegation habits (model choices, specialized workflows, sequential-pass discipline)
+- Delegation habits (subagents, model choices, specialized workflows, parallelism)
 - Verification posture (what "done" means; unit tests vs live repro; reviewers)
 - Code and prose discipline (style, principles cited, lint/format tools)
 - Process conventions (worktrees, commits, PRs, review/merge tooling)
@@ -54,7 +54,7 @@ Group the combined signals into sections. Common ones (use only what applies):
 - **Response style**: length, tone, format.
 - **Autonomy**: how much to do without asking; MCP tool use.
 - **Understand first**: which skills to reach for when scoping or investigating a change.
-- **Passes and models**: which model for which kind of work, sequential-pass habits, specialized workflows.
+- **Subagents**: delegation defaults, parallelism, model-to-task choices, specialized workflows.
 - **Prose / code discipline**: principles, lint tools, style guides.
 - **Review and verify**: repro posture, verification skills, live-testing tools.
 - **Process**: git worktrees, commits, PRs, review/merge tooling.

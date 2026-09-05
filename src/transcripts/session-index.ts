@@ -11,8 +11,8 @@
  * JSON keys) before it leaves the module, and every read is bounded by message
  * count and bytes.
  */
-import { readdir, readFile, stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { readdir, open, stat } from "node:fs/promises";
+import { join, resolve, basename } from "node:path";
 import { isRecord } from "../core/guards";
 
 export const DEFAULT_LIST_LIMIT = 10;
@@ -24,21 +24,71 @@ export const ENTRY_TEXT_LIMIT = 4000;
 
 /** Every `.jsonl` session file under the sessions root, sorted by path. */
 export const sessionFiles = async (sessionsRoot: string): Promise<string[]> => {
-  const projects = await readdir(sessionsRoot).catch(() => []);
   const files: string[] = [];
-  for (const project of projects) {
-    const dir = join(sessionsRoot, project);
-    if (!(await stat(dir).then((info) => info.isDirectory()).catch(() => false))) continue;
-    for (const name of await readdir(dir).catch(() => [] as string[])) {
-      if (name.endsWith(".jsonl")) files.push(join(dir, name));
+  const visit = async (dir: string): Promise<void> => {
+    const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) await visit(path);
+      else if (entry.isFile() && entry.name.endsWith(".jsonl"))
+        files.push(path);
+    }
+  };
+  await visit(sessionsRoot);
+  return files.sort().reverse();
+};
+
+const readBounded = async (path: string, maxBytes: number): Promise<string> => {
+  const file = await open(path, "r");
+  try {
+    const buffer = Buffer.alloc(Math.min((await file.stat()).size, maxBytes));
+    const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+    return buffer.subarray(0, bytesRead).toString("utf8");
+  } finally {
+    await file.close();
+  }
+};
+
+const scopedFiles = async (
+  root: string,
+  scope: string,
+): Promise<
+  Array<{ file: string; header: SessionHeaderInfo; modifiedMs: number }>
+> => {
+  const found: Array<{
+    file: string;
+    header: SessionHeaderInfo;
+    modifiedMs: number;
+  }> = [];
+  for (const file of await sessionFiles(root)) {
+    try {
+      const prefix = (await readBounded(file, 65536))
+        .split("\n")
+        .flatMap((line) => {
+          try {
+            const value: unknown = JSON.parse(line);
+            return isRecord(value) ? [value] : [];
+          } catch {
+            return [];
+          }
+        });
+      const header = sessionHeader(prefix);
+      if (header?.cwd && resolve(header.cwd) === resolve(scope))
+        found.push({ file, header, modifiedMs: (await stat(file)).mtimeMs });
+    } catch {
+      /* A partial header cannot establish project scope. */
     }
   }
-  return files.sort();
+  return found.sort(
+    (a, b) => b.modifiedMs - a.modifiedMs || b.file.localeCompare(a.file),
+  );
 };
 
 /** Parse a JSONL transcript defensively; malformed lines are skipped. */
-export const readEntries = async (path: string): Promise<Record<string, unknown>[]> => {
-  const lines = (await readFile(path, "utf8")).split("\n");
+export const readEntries = async (
+  path: string,
+): Promise<Record<string, unknown>[]> => {
+  const lines = (await readBounded(path, 8 * 1024 * 1024)).split("\n");
   const entries: Record<string, unknown>[] = [];
   for (const line of lines) {
     if (line.trim() === "") continue;
@@ -77,12 +127,14 @@ export interface SessionSummary {
   readonly sessionId: string;
   readonly cwd: string;
   readonly timestamp: string;
+  readonly modifiedAt: string;
   readonly messages: number;
+  readonly truncated: boolean;
   readonly file: string;
-};
+}
 
 /**
- * Sessions recorded under `scope`, newest-sorted by file path, bounded to
+ * Sessions recorded under `scope`, newest-sorted by modification time, bounded to
  * `limit`. Sessions with no recorded cwd are excluded (fail-closed).
  */
 export const listProjectSessions = async (
@@ -90,19 +142,18 @@ export const listProjectSessions = async (
   scope: string,
   limit: number = DEFAULT_LIST_LIMIT,
 ): Promise<SessionSummary[]> => {
-  const resolvedScope = resolve(scope);
-  const files = await sessionFiles(sessionsRoot);
   const summaries: SessionSummary[] = [];
-  for (const file of files) {
+  for (const { file, header, modifiedMs } of (
+    await scopedFiles(sessionsRoot, scope)
+  ).slice(0, limit)) {
     const entries = await readEntries(file).catch(() => []);
-    const header = sessionHeader(entries);
-    if (header === undefined || header.cwd === "") continue;
-    if (resolve(header.cwd) !== resolvedScope) continue;
     summaries.push({
       sessionId: header.id,
       cwd: header.cwd,
       timestamp: header.timestamp,
+      modifiedAt: new Date(modifiedMs).toISOString(),
       messages: entries.filter((entry) => entry.type === "message").length,
+      truncated: (await stat(file)).size > 8 * 1024 * 1024,
       file,
     });
     if (summaries.length >= limit) break;
@@ -114,7 +165,8 @@ export const listProjectSessions = async (
 // Redaction
 // ---------------------------------------------------------------------------
 
-const PRIVATE_KEY_BLOCK = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g;
+const PRIVATE_KEY_BLOCK =
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g;
 
 const SECRET_PATTERNS: RegExp[] = [
   /\bBearer\s+[A-Za-z0-9._~+/-]+=*/g,
@@ -129,7 +181,12 @@ const SECRET_PATTERNS: RegExp[] = [
 /** Replace credential-shaped substrings in arbitrary text. */
 export const redactText = (text: string): string => {
   let out = text.replace(PRIVATE_KEY_BLOCK, "[redacted]");
-  for (const pattern of SECRET_PATTERNS) out = out.replace(pattern, "[redacted]");
+  out = out.replace(
+    /(["']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|client[_-]?secret)["']?\s*[:=]\s*)(?:"[^"\n]*"|'[^'\n]*'|[^\s,}]+)/gi,
+    "$1[redacted]",
+  );
+  for (const pattern of SECRET_PATTERNS)
+    out = out.replace(pattern, "[redacted]");
   return out;
 };
 
@@ -150,11 +207,14 @@ export const entryText = (
     text = content;
   } else if (Array.isArray(content)) {
     text = content
-      .flatMap((part) =>
-        isRecord(part) && part.type === "text" && typeof part.text === "string"
-          ? [part.text]
-          : [],
-      )
+      .flatMap((part) => {
+        if (!isRecord(part)) return [];
+        if (part.type === "text" && typeof part.text === "string")
+          return [part.text];
+        if (part.type === "toolCall" && typeof part.name === "string")
+          return [`tool ${part.name}: ${JSON.stringify(part.arguments ?? {})}`];
+        return [];
+      })
       .join("\n");
   }
   const redacted = redactText(text);
@@ -168,8 +228,17 @@ const entryLabel = (entry: Record<string, unknown>): string => {
   const message = isRecord(entry.message) ? entry.message : undefined;
   if (message !== undefined) {
     const role = typeof message.role === "string" ? message.role : "message";
-    const toolName = typeof message.toolName === "string" ? message.toolName : "";
-    return toolName === "" ? `${type} ${role}` : `${type} ${role} ${toolName}`;
+    const toolName =
+      typeof message.toolName === "string" ? message.toolName : "";
+    const model =
+      role === "assistant" &&
+      typeof message.provider === "string" &&
+      typeof message.model === "string"
+        ? ` ${message.provider}/${message.model}`
+        : "";
+    return toolName === ""
+      ? `${type} ${role}${model}`
+      : `${type} ${role} ${toolName}`;
   }
   if (type === "model_change") {
     return typeof entry.model === "string" ? `${type} ${entry.model}` : type;
@@ -184,7 +253,7 @@ export const renderReadEntry = (entry: Record<string, unknown>): string => {
   const timestamp = typeof entry.timestamp === "string" ? entry.timestamp : "";
   const body = entryText(entry, ENTRY_TEXT_LIMIT);
   const header = `[${id}] ${timestamp} ${entryLabel(entry)}`;
-  return body === "" ? header : `${header}\n${body}`;
+  return redactText(body === "" ? header : `${header}\n${body}`);
 };
 
 /**
@@ -200,14 +269,14 @@ export const readSessionSlice = async (
   limit: number = DEFAULT_READ_LIMIT,
   maxBytes: number = DEFAULT_READ_MAX_BYTES,
 ): Promise<{ file: string; text: string } | undefined> => {
-  const resolvedScope = resolve(scope);
-  const files = await sessionFiles(sessionsRoot);
-  for (const file of files) {
+  const matches = (await scopedFiles(sessionsRoot, scope)).filter(
+    ({ file, header }) =>
+      header.id.startsWith(sessionId) || basename(file) === sessionId,
+  );
+  if (matches.length > 1)
+    throw new Error(`Ambiguous session prefix: ${sessionId}`);
+  for (const { file } of matches) {
     const entries = await readEntries(file).catch(() => []);
-    const header = sessionHeader(entries);
-    if (header === undefined || header.cwd === "") continue;
-    if (resolve(header.cwd) !== resolvedScope) continue;
-    if (!(header.id.startsWith(sessionId) || file.includes(sessionId))) continue;
     const picked: Record<string, unknown>[] = [];
     let messageCount = 0;
     for (const entry of entries) {
@@ -222,11 +291,29 @@ export const readSessionSlice = async (
     let out = "";
     for (const entry of picked) {
       const line = renderReadEntry(entry);
-      if (out.length + line.length + 1 > maxBytes) {
-        out += `\n[truncated at ${maxBytes} bytes]`;
+      if (Buffer.byteLength(out + line + "\n") > maxBytes) {
+        const marker = `\n[truncated at ${maxBytes} bytes]`;
+        const remaining = Math.max(0, maxBytes - Buffer.byteLength(marker));
+        const clipped = Buffer.from(out + line)
+          .subarray(0, remaining)
+          .toString("utf8")
+          .replace(/\uFFFD$/, "");
+        out = clipped + marker;
         break;
       }
       out += `${line}\n`;
+    }
+    const truncated =
+      messageCount <
+        entries.filter((entry) => entry.type === "message").length ||
+      (await stat(file)).size > 8 * 1024 * 1024;
+    if (truncated) {
+      const marker = "\n[more entries omitted]";
+      out =
+        Buffer.from(out)
+          .subarray(0, Math.max(0, maxBytes - Buffer.byteLength(marker)))
+          .toString("utf8")
+          .replace(/\uFFFD$/, "") + marker;
     }
     return { file, text: out.trim() || "(empty session)" };
   }
@@ -249,21 +336,19 @@ export const searchInSessions = async (
   query: string,
   limit: number = DEFAULT_SEARCH_LIMIT,
 ): Promise<SearchHit[]> => {
-  const resolvedScope = resolve(scope);
-  const files = await sessionFiles(sessionsRoot);
   const hits: SearchHit[] = [];
-  for (const file of files) {
+  for (const { file } of await scopedFiles(sessionsRoot, scope)) {
     const entries = await readEntries(file).catch(() => []);
-    const header = sessionHeader(entries);
-    if (header === undefined || header.cwd === "") continue;
-    if (resolve(header.cwd) !== resolvedScope) continue;
     for (const entry of entries) {
       const text = entryText(entry);
       if (text.includes(query)) {
         hits.push({
           file,
           id: typeof entry.id === "string" ? entry.id : "",
-          excerpt: text.slice(0, SEARCH_EXCERPT_LENGTH),
+          excerpt: text.slice(
+            Math.max(0, text.indexOf(query) - 80),
+            Math.max(0, text.indexOf(query) - 80) + SEARCH_EXCERPT_LENGTH,
+          ),
         });
         if (hits.length >= limit) return hits;
       }

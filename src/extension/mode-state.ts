@@ -46,10 +46,10 @@ export interface PstackModeState {
 export const isModeEntryData = (value: unknown): value is ModeEntryData =>
   isRecord(value) &&
   typeof value.enabled === "boolean" &&
-  (value.source === "session-on" || value.source === "session-off");
+  value.source === (value.enabled ? "session-on" : "session-off");
 
 export const isRouterEntryData = (value: unknown): value is RouterEntryData =>
-  isRecord(value) && typeof value.at === "number";
+  isRecord(value) && typeof value.at === "number" && Number.isFinite(value.at);
 
 const isCustomEntry = (entry: SessionEntry, customType: string): entry is CustomEntry =>
   entry.type === "custom" && entry.customType === customType;
@@ -70,27 +70,16 @@ export const restoreModeState = (
   let modeEntry: { enabled: boolean; source: "session-on" | "session-off" } | undefined;
   let routerLoaded = false;
 
-  for (const entry of branch) {
-    if (entry.type !== "custom") continue;
-    if (entry.customType === MODE_ENTRY) {
-      if (!isModeEntryData(entry.data)) {
-        throw new PstackError(
-          "PSTACK_MODE_CORRUPT",
-          `Session entry ${MODE_ENTRY} has an invalid payload; pstack mode is disabled. ` +
-            `Run /poteto-mode on to reapply, or delete the corrupt entry before resuming.`,
-        );
-      }
-      modeEntry = { enabled: entry.data.enabled, source: entry.data.source };
-    } else if (isCustomEntry(entry, ROUTER_ENTRY)) {
-      if (!isRouterEntryData(entry.data)) {
-        throw new PstackError(
-          "PSTACK_MODE_CORRUPT",
-          `Session entry ${ROUTER_ENTRY} has an invalid payload; pstack routing is disabled.`,
-        );
-      }
-      routerLoaded = true;
+  const newestFirst = [...branch].reverse();
+  const latestMode = newestFirst.find(entry => isCustomEntry(entry, MODE_ENTRY));
+  if (latestMode && isCustomEntry(latestMode, MODE_ENTRY)) {
+    if (!isModeEntryData(latestMode.data)) {
+      throw new PstackError("PSTACK_MODE_CORRUPT", `Session entry ${MODE_ENTRY} has an invalid payload; pstack mode is disabled. Run /poteto-mode on or off to replace the invalid setting.`);
     }
+    modeEntry = latestMode.data;
   }
+  const latestRouter = newestFirst.find(entry => isCustomEntry(entry, ROUTER_ENTRY));
+  routerLoaded = latestRouter !== undefined && isCustomEntry(latestRouter, ROUTER_ENTRY) && isRouterEntryData(latestRouter.data);
 
   if (modeEntry) {
     return { ...modeEntry, routerLoaded };

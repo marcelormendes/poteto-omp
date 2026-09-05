@@ -33,6 +33,8 @@ Identify the scope. If ambiguous, state your best-guess interpretation before ex
 
 When in doubt, lean simple. You can always run explorer passes if the explainer hits a wall.
 
+Before handing off, include any diff, Git history, or runtime output the question depends on in the shared context. These read-only agents have `read`, `grep`, and `glob`; the parent runs necessary commands. If a worker reports missing evidence, obtain that evidence before another focused pass.
+
 ### Step 2a. Explore (complex questions only)
 
 Decompose the question into 2-4 exploration angles, each a distinct slice of the subsystem so passes don't duplicate work. Example split for "how does the rate limiter work?":
@@ -43,14 +45,10 @@ Decompose the question into 2-4 exploration angles, each a distinct slice of the
 
 The right decomposition depends on the question. Use your judgment. Narrow questions: 2 passes is fine. Broad subsystems: up to 4.
 
-**Task fan-out (default).** Spawn one explorer per angle with one batched task call ({ context, tasks[] }); the call is the barrier and results return in input order. Each item names the agent returned by pstack_route for the how-explorer role and carries a standalone brief built from `references/explorer-prompt.md` plus its exploration angle; read-only workers spawn without isolation. Briefs stay identical across passes except the angle; every brief is standalone — no explorer references another's findings. Results come back in input order, each with its PASS / ISSUES / BLOCKED status line.
-
-**Fallback: sequential passes (only when the role agents are not installed; run `setup-pstack` first).** Run the explorer passes sequentially, one pass per angle, in this session. Each pass is a numbered block of work run to completion before the next starts (Pass 1, Pass 2, ...). The briefs stay identical across passes; only the exploration angle differs.
-
-Each pass gets the same base prompt from `references/explorer-prompt.md` plus a specific exploration angle naming its slice. Run each pass inline under the current session model and record it.
+**Task fan-out (default).** Spawn one explorer per angle with one batched task call ({ context, tasks[] }); collect every launched job through `hub` before consuming results. Each item names the agent returned by pstack_route for the how-explorer role and carries a standalone brief built from `references/explorer-prompt.md` plus its exploration angle; read-only workers spawn without isolation. Briefs stay identical across passes except the angle; every brief is standalone — no explorer references another's findings. Results come back in input order, each with its PASS / ISSUES / BLOCKED status line.
 
 Each pass should:
-- Start broad: locate relevant directories and files (`find`, `ls`), grep for key types/interfaces/class names
+- Start broad: locate relevant directories and files (`glob`), grep for key types/interfaces/class names
 - Follow the thread: from an entry point, trace the call chain (callers, callees, data flow, type definitions)
 - Read the actual code, don't guess from file names
 - Stop when it can describe the full path from input to output (or trigger to effect) without hand-waving any step
@@ -62,17 +60,11 @@ Then proceed to Step 3.
 
 ### Step 2b. Direct Explain (simple questions)
 
-**Task spawn (default).** Launch the explainer as one task spawn naming the agent returned by pstack_route for the how-explainer role; read-only, no isolation. Its task is the prompt from `references/explainer-prompt.md`; it explores (find + grep + read) and writes the explanation in one go. Same structure, just no explorer findings as input. Record the model from the result. Proceed to Step 4.
-
-**Fallback (only when the role agents are not installed; run `setup-pstack` first).** Run one explainer pass that explores and explains in one go. Read `references/explainer-prompt.md` for the communication style and output format. Do your own exploration (find + grep + read), then write the explanation directly. Same structure, just no explorer findings as input.
-
-Run it inline under the current session model and record it. Proceed to Step 4.
+**Task spawn (default).** Launch the explainer as one task spawn naming the agent returned by pstack_route for the how-explainer role; read-only, no isolation. Its task is the prompt from `references/explainer-prompt.md`; it explores (`glob`, `grep`, and `read`) and writes the explanation in one go. Same structure, just no explorer findings as input. Record the model from the result. Proceed to Step 4.
 
 ### Step 3. Synthesize (complex questions only)
 
 **Task spawn (default).** Once all explorer passes return, launch the synthesize pass as one task spawn naming the agent returned by pstack_route for the how-explainer role, read-only, no isolation. Its task collects every pass's findings and the template in `references/explainer-prompt.md`; it reconciles overlapping findings, resolves contradictions, and weaves the slices into one unified picture. Record the model from the result.
-
-Run it inline under the current session model and record it.
 
 ### Step 4. Present
 
@@ -104,11 +96,11 @@ Run the full explain flow above (Steps 1-4). You must understand the architectur
 
 ### Step 2. Run Critics
 
-run one critic pass per model in your configured how-critics seats (see the seats bound by setup-pstack from the `modelRoles` entries in `~/.omp/agent/config.yml`; defaults span model families — never invent a model selector)
+Resolve the configured `how-critics` panel with `pstack_route` and run one critic per returned seat. Setup defines the models; never invent a selector.
 
-**Task panel (default).** Run one critic per seat with one batched task call; each item names the agent returned by pstack_route for its how-critics seat, carries the identical brief, reads only with isolation disabled, and sets outputSchema plus schemaMode strict. Contrast rule: pass the excluded explainer-family selector to pstack_route so it returns a contrasting seat. Record which model ran which pass.
+**Task panel (default).** Run one critic per seat with one batched task call; each item names the agent returned by pstack_route for its how-critics seat, carries the identical brief, and reads only without isolation. Record which model ran which pass.
 
-Run the critic passes sequentially, numbered, one per model, each as its own block in this session. Run each pass inline under the current session model and record it. Each critic pass reads the code but edits nothing.
+Each critic reads the code and edits nothing. Collect all job results before lead judgment.
 
 Read `references/critic-prompt.md` for the prompt template. Each critic pass gets:
 1. The explanation from Step 1 (so it doesn't re-explore)

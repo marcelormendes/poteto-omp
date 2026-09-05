@@ -20,7 +20,11 @@ import {
   scalarAgentName,
 } from "../core/types";
 import type { PstackConfig } from "../core/types";
-import { isGeneratedAgentsManifest } from "../core/guards";
+import {
+  buildSemanticModelRoles,
+  generateAgentFiles,
+} from "../setup/agent-generator";
+import { isRecord, isGeneratedAgentsManifest } from "../core/guards";
 import { parseYaml } from "../core/yaml";
 import { currentSetupChecksum } from "./router";
 import { checkTaskCapabilities } from "./capabilities";
@@ -30,7 +34,14 @@ import type { PstackPaths } from "../core/paths";
 
 export interface AgentDriftFinding {
   readonly file: string;
-  readonly kind: "manifest-missing" | "missing" | "checksum" | "manifest-entry-missing" | "unexpected";
+  readonly kind:
+    | "manifest-missing"
+    | "missing"
+    | "checksum"
+    | "manifest-entry-missing"
+    | "unexpected"
+    | "model-role"
+    | "stale";
   readonly detail: string;
 }
 
@@ -67,11 +78,14 @@ export interface PstackStatusReport {
 
 /** Injectable I/O so unit tests never touch the real filesystem or Settings. */
 export interface StatusDependencies {
+  readonly getModelRoles: () => Promise<Record<string, string>>;
   readonly readText: (path: string) => Promise<string | undefined>;
   readonly readDir: (path: string) => Promise<string[]>;
   readonly sha256: (content: string) => string;
   readonly getTaskValue: (key: TaskCapabilityKey) => unknown;
-  readonly probe: (command: string) => Promise<{ present: boolean; version?: string }>;
+  readonly probe: (
+    command: string,
+  ) => Promise<{ present: boolean; version?: string }>;
 }
 
 const ENOENT = "ENOENT";
@@ -124,9 +138,21 @@ const PREREQUISITES: readonly {
   requirementLevel: "required" | "workflow";
   requiredFor: string;
 }[] = [
-  { command: "git", requirementLevel: "required", requiredFor: "worktree isolation, arena candidates, swarm slices" },
-  { command: "gh", requirementLevel: "workflow", requiredFor: "opening-a-pr, shipping, babysit, PR workflows" },
-  { command: "gt", requirementLevel: "workflow", requiredFor: "stacked PRs and Graphite workflows" },
+  {
+    command: "git",
+    requirementLevel: "required",
+    requiredFor: "worktree isolation, arena candidates, swarm slices",
+  },
+  {
+    command: "gh",
+    requirementLevel: "workflow",
+    requiredFor: "opening-a-pr, shipping, babysit, PR workflows",
+  },
+  {
+    command: "bun",
+    requirementLevel: "required",
+    requiredFor: "skill helper scripts",
+  },
 ];
 
 /**
@@ -148,7 +174,9 @@ export const inspectPstackStatus = async (
 
   const capabilitiesChecked = deps.getTaskValue !== undefined;
   const capabilityFindings = capabilitiesChecked
-    ? checkTaskCapabilities(deps.getTaskValue as (key: TaskCapabilityKey) => unknown)
+    ? checkTaskCapabilities(
+        deps.getTaskValue as (key: TaskCapabilityKey) => unknown,
+      )
     : [];
 
   const configText = await readText(paths.configPath);
@@ -164,12 +192,58 @@ export const inspectPstackStatus = async (
     }
   }
   const configValid = config !== undefined;
-  const checksumValid = configText !== undefined && verifySetupChecksum(configText);
+  const checksumValid =
+    configText !== undefined && verifySetupChecksum(configText);
 
   const drift: AgentDriftFinding[] = [];
+  if (config && config.upstreamCommit !== UPSTREAM_COMMIT)
+    drift.push({
+      file: paths.configPath,
+      kind: "stale",
+      detail:
+        "Setup records another upstream revision; rerun /setup-pstack to refresh its provenance.",
+    });
+  if (config) {
+    try {
+      let roles: Record<string, unknown>;
+      if (deps.getModelRoles) roles = await deps.getModelRoles();
+      else {
+        const raw = await readText(join(paths.agentDir, "config.yml"));
+        const parsed = raw ? parseYaml(raw) : undefined;
+        roles =
+          isRecord(parsed) && isRecord(parsed.modelRoles)
+            ? parsed.modelRoles
+            : {};
+      }
+      const expected = buildSemanticModelRoles(config);
+      for (const key of new Set([
+        ...Object.keys(expected),
+        ...Object.keys(roles).filter((key) => key.startsWith("pstack-")),
+      ])) {
+        if (roles[key] !== expected[key])
+          drift.push({
+            file: "config.yml",
+            kind: "model-role",
+            detail: `modelRoles.${key} differs from pstack setup; rerun /setup-pstack to reconcile it.`,
+          });
+      }
+    } catch (error) {
+      drift.push({
+        file: "config.yml",
+        kind: "model-role",
+        detail: `Cannot verify OMP model roles: ${String(error)}`,
+      });
+    }
+  }
+  const expectedContent = new Map(
+    config
+      ? generateAgentFiles(config).map((agent) => [agent.file, agent.content])
+      : [],
+  );
   const expectedFiles: string[] = [];
   if (config !== undefined) {
-    for (const role of SCALAR_ROLES) expectedFiles.push(`${scalarAgentName(role)}.md`);
+    for (const role of SCALAR_ROLES)
+      expectedFiles.push(`${scalarAgentName(role)}.md`);
     for (const panel of PANEL_ROLES) {
       const seats = config.panels[panel];
       for (let seat = 1; seat <= seats.length; seat += 1) {
@@ -184,14 +258,17 @@ export const inspectPstackStatus = async (
       drift.push({
         file: paths.generatedManifestPath,
         kind: "manifest-missing",
-        detail: "generated-agents.json is missing; rerun /setup-pstack to rebuild the ownership manifest.",
+        detail:
+          "generated-agents.json is missing; rerun /setup-pstack to rebuild the ownership manifest.",
       });
     }
   } else {
     let manifestEntries: { file: string; sha256: string }[] | undefined;
     try {
       const parsed = parseYaml(manifestText, paths.generatedManifestPath);
-      manifestEntries = isGeneratedAgentsManifest(parsed) ? [...parsed.entries] : undefined;
+      manifestEntries = isGeneratedAgentsManifest(parsed)
+        ? [...parsed.entries]
+        : undefined;
     } catch {
       manifestEntries = undefined;
     }
@@ -199,7 +276,8 @@ export const inspectPstackStatus = async (
       drift.push({
         file: paths.generatedManifestPath,
         kind: "manifest-missing",
-        detail: "generated-agents.json is unreadable or malformed; rerun /setup-pstack to rebuild it.",
+        detail:
+          "generated-agents.json is unreadable or malformed; rerun /setup-pstack to rebuild it.",
       });
     } else {
       const declared = new Set(manifestEntries.map((entry) => entry.file));
@@ -217,6 +295,16 @@ export const inspectPstackStatus = async (
             file: entry.file,
             kind: "checksum",
             detail: `Agent file ${entry.file} no longer matches its manifest checksum; rerun /setup-pstack.`,
+          });
+        } else if (
+          expectedContent.has(entry.file) &&
+          expectedContent.get(entry.file) !== content
+        ) {
+          drift.push({
+            file: entry.file,
+            kind: "stale",
+            detail:
+              "Generated instructions differ from this plugin version; rerun /setup-pstack.",
           });
         }
       }
@@ -255,15 +343,21 @@ export const inspectPstackStatus = async (
   }
 
   const recordedChecksum = config?.setupChecksum ?? "";
-  const currentChecksum = config !== undefined ? currentSetupChecksum(config) : "";
+  const currentChecksum =
+    config !== undefined ? currentSetupChecksum(config) : "";
 
   const scalarRoles = config !== undefined ? SCALAR_ROLES.length : 0;
   const panelSeats =
     config !== undefined
-      ? PANEL_ROLES.reduce((total, panel) => total + config.panels[panel].length, 0)
+      ? PANEL_ROLES.reduce(
+          (total, panel) => total + config.panels[panel].length,
+          0,
+        )
       : 0;
 
-  const gitPresent = prerequisites.find((entry) => entry.command === "git")?.present === true;
+  const requiredPresent = prerequisites
+    .filter((entry) => entry.requirementLevel === "required")
+    .every((entry) => entry.present);
   const ok =
     configPresent &&
     configValid &&
@@ -272,7 +366,7 @@ export const inspectPstackStatus = async (
     drift.length === 0 &&
     capabilitiesChecked &&
     capabilityFindings.length === 0 &&
-    gitPresent;
+    requiredPresent;
 
   return {
     ompVersion: OMP_VERSION,

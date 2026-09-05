@@ -7,7 +7,16 @@
 // remove only its own files. The tool-profile and manifest vocabulary is the
 // canonical one from src/core/types.
 
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, unlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { parse } from "yaml";
 import type {
@@ -33,6 +42,8 @@ import { sha256Hex } from "./schema";
 
 /** Read-only agent tool set (yield is auto-added by OMP for tool lists). */
 const READONLY_TOOLS = ["read", "grep", "glob"];
+const READONLY_GUIDANCE =
+  "Read source with read, grep, and glob. When a necessary fact requires an unavailable command, identify the missing evidence in your result and return so the parent can obtain it. Do not emulate unavailable tools or scan binary Git objects. Keep findings proportional to the task; do not repeat shared context.";
 
 /** A generated agent file, fully rendered. */
 export interface GeneratedAgent {
@@ -45,6 +56,7 @@ export interface GeneratedAgent {
   tools?: string[];
   /** Subagent spawn permissions; emitted only for coordinator agents. */
   spawns?: string[] | "*";
+  autoloadSkills?: string[];
   /** ModelRoles alias (`@pstack-*`); null means inherit-parent (no model frontmatter). */
   modelRole: string | null;
   /** Semantic role: scalar name (`feature`) or panel seat (`how-critics-1`). */
@@ -61,6 +73,7 @@ export interface ParsedAgentFrontmatter {
   model?: string[];
   tools?: string[];
   spawns?: string[] | "*";
+  autoloadSkills?: string[];
   thinkingLevel?: string;
   body: string;
 }
@@ -73,17 +86,20 @@ interface RoleSpec {
 
 const SCALAR_SPECS: Record<ScalarRole, RoleSpec> = {
   feature: {
-    description: "Pstack feature role: implement a complete behavior slice with tests",
+    description:
+      "Pstack feature role: implement a complete behavior slice with tests",
     body: "Implement the assigned behavior slice completely with focused tests. Read skill://how first when the subsystem is unfamiliar. Verify against the real surface and report evidence.",
     profile: "writing",
   },
   refactoring: {
-    description: "Pstack refactoring role: behavior-preserving structural change",
+    description:
+      "Pstack refactoring role: behavior-preserving structural change",
     body: "Make the assigned behavior-preserving structural change. Pin behavior before edits, migrate callers, delete legacy paths in the same wave. Verify with the focused suite.",
     profile: "writing",
   },
   "bug-fix": {
-    description: "Pstack bug-fix role: reproduce, root-cause, fix with runtime evidence",
+    description:
+      "Pstack bug-fix role: reproduce, root-cause, fix with runtime evidence",
     body: "Reproduce the defect on the real surface first, trace to the root cause, fix there, keep a regression test. Never ship a speculative guard.",
     profile: "writing",
   },
@@ -93,7 +109,8 @@ const SCALAR_SPECS: Record<ScalarRole, RoleSpec> = {
     profile: "writing",
   },
   hillclimb: {
-    description: "Pstack hillclimb role: sustained metric improvement, one win per step",
+    description:
+      "Pstack hillclimb role: sustained metric improvement, one win per step",
     body: "Advance one metric with looped hypotheses and before/after measurement. One change per step; keep a decision log.",
     profile: "writing",
   },
@@ -103,12 +120,14 @@ const SCALAR_SPECS: Record<ScalarRole, RoleSpec> = {
     profile: "read-only",
   },
   hardest: {
-    description: "Pstack hardest role: cross-cutting design and subtle algorithms",
+    description:
+      "Pstack hardest role: cross-cutting design and subtle algorithms",
     body: "Handle the assigned cross-cutting or algorithmic task end to end: ground first, implement, verify against the real surface.",
     profile: "writing",
   },
   "how-explorer": {
-    description: "Pstack how-explorer role: read-only mechanics or integration evidence",
+    description:
+      "Pstack how-explorer role: read-only mechanics or integration evidence",
     body: "Investigate only the assigned slice. Read code and callers; cite exact paths and lines. Return PASS or ISSUES with evidence pointers. Never modify files.",
     profile: "read-only",
   },
@@ -118,12 +137,14 @@ const SCALAR_SPECS: Record<ScalarRole, RoleSpec> = {
     profile: "read-only",
   },
   "why-investigator": {
-    description: "Pstack why-investigator role: source-control and repository archaeology",
+    description:
+      "Pstack why-investigator role: source-control and repository archaeology",
     body: "Investigate the assigned evidence category with broad-to-narrow searches. Prefix findings Direct/Indirect/Contradiction/Lead. Workspace mutation is forbidden; use a non-writing posture.",
     profile: "mcp-posture",
   },
   "why-synthesizer": {
-    description: "Pstack why-synthesizer role: evidence-backed historical explanation",
+    description:
+      "Pstack why-synthesizer role: evidence-backed historical explanation",
     body: "Synthesize investigator evidence with explicit epistemics. Separate statements from inference. Workspace mutation is forbidden; use a non-writing posture.",
     profile: "mcp-posture",
   },
@@ -133,7 +154,8 @@ const SCALAR_SPECS: Record<ScalarRole, RoleSpec> = {
     profile: "mcp-posture",
   },
   "reflect-judgment": {
-    description: "Pstack reflect-judgment role: review through the judgment lens",
+    description:
+      "Pstack reflect-judgment role: review through the judgment lens",
     body: "Review the session through the judgment lens only. Workspace mutation is forbidden; return lens findings with evidence pointers.",
     profile: "mcp-posture",
   },
@@ -187,8 +209,14 @@ const PANEL_SPECS: Record<PanelRole, RoleSpec> = {
  * frontmatter (name, description, optional model role alias, tools, spawns)
  * followed by the system prompt body. Deterministic — no timestamps.
  */
-export const renderGeneratedAgent = (agent: Omit<GeneratedAgent, "content">): string => {
-  const lines = ["---", `name: ${agent.name}`, `description: ${JSON.stringify(agent.description)}`];
+export const renderGeneratedAgent = (
+  agent: Omit<GeneratedAgent, "content">,
+): string => {
+  const lines = [
+    "---",
+    `name: ${agent.name}`,
+    `description: ${JSON.stringify(agent.description)}`,
+  ];
   if (agent.modelRole !== null) {
     lines.push(`model: ${JSON.stringify(agent.modelRole)}`);
   }
@@ -196,13 +224,21 @@ export const renderGeneratedAgent = (agent: Omit<GeneratedAgent, "content">): st
     lines.push(`tools: [${agent.tools.join(", ")}]`);
   }
   if (agent.spawns !== undefined) {
-    lines.push(agent.spawns === "*" ? `spawns: "*"` : `spawns: [${agent.spawns.join(", ")}]`);
+    lines.push(
+      agent.spawns === "*"
+        ? `spawns: "*"`
+        : `spawns: [${agent.spawns.join(", ")}]`,
+    );
   }
+  if (agent.autoloadSkills?.length)
+    lines.push(`autoloadSkills: ${JSON.stringify(agent.autoloadSkills)}`);
   lines.push("---", "", agent.body, "");
   return lines.join("\n");
 };
 
-const withContent = (agent: Omit<GeneratedAgent, "content">): GeneratedAgent => ({
+const withContent = (
+  agent: Omit<GeneratedAgent, "content">,
+): GeneratedAgent => ({
   ...agent,
   content: renderGeneratedAgent(agent),
 });
@@ -218,17 +254,25 @@ export const generateAgentFiles = (config: PstackConfig): GeneratedAgent[] => {
   for (const role of SCALAR_ROLES) {
     const spec = SCALAR_SPECS[role];
     const choice = config.roles[role];
-    const modelRole = choice.type === "model" ? `@${scalarAgentName(role)}` : null;
+    const modelRole =
+      choice.type === "model" ? `@${scalarAgentName(role)}` : null;
     agents.push(
       withContent({
         file: `${scalarAgentName(role)}.md`,
         name: scalarAgentName(role),
         description: spec.description,
-        body: spec.body,
+        body:
+          spec.profile === "read-only"
+            ? `${spec.body} ${READONLY_GUIDANCE}`
+            : spec.body,
         tools: spec.profile === "read-only" ? READONLY_TOOLS : undefined,
         modelRole,
         semanticRole: role,
         toolProfile: spec.profile,
+        autoloadSkills:
+          spec.profile === "writing" && role !== "swarm-worker"
+            ? ["poteto-mode"]
+            : undefined,
       }),
     );
   }
@@ -243,7 +287,10 @@ export const generateAgentFiles = (config: PstackConfig): GeneratedAgent[] => {
           file: `${name}.md`,
           name,
           description: `Pstack ${panel} seat ${seat}`,
-          body: spec.body,
+          body:
+            spec.profile === "read-only"
+              ? `${spec.body} ${READONLY_GUIDANCE}`
+              : spec.body,
           tools: spec.profile === "read-only" ? READONLY_TOOLS : undefined,
           modelRole,
           semanticRole: `${panel}-${seat}`,
@@ -255,7 +302,10 @@ export const generateAgentFiles = (config: PstackConfig): GeneratedAgent[] => {
   return agents;
 };
 
-const parseStringOrList = (value: unknown, where: string): string[] | undefined => {
+const parseStringOrList = (
+  value: unknown,
+  where: string,
+): string[] | undefined => {
   if (value === undefined || value === null) return undefined;
   if (typeof value === "string") {
     const items = value
@@ -267,13 +317,19 @@ const parseStringOrList = (value: unknown, where: string): string[] | undefined 
   if (Array.isArray(value)) {
     const items = value.map((item) => {
       if (typeof item !== "string") {
-        throw new PstackError("PSTACK_CONFIG_INVALID", `${where} must be a list of strings`);
+        throw new PstackError(
+          "PSTACK_CONFIG_INVALID",
+          `${where} must be a list of strings`,
+        );
       }
       return item.trim();
     });
     return items.filter((item) => item !== "");
   }
-  throw new PstackError("PSTACK_CONFIG_INVALID", `${where} must be a string or list of strings`);
+  throw new PstackError(
+    "PSTACK_CONFIG_INVALID",
+    `${where} must be a string or list of strings`,
+  );
 };
 
 /**
@@ -288,7 +344,10 @@ export const parseAgentFrontmatter = (
 ): ParsedAgentFrontmatter => {
   const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(content);
   if (match === null) {
-    throw new PstackError("PSTACK_CONFIG_INVALID", `${filePath}: missing YAML frontmatter`);
+    throw new PstackError(
+      "PSTACK_CONFIG_INVALID",
+      `${filePath}: missing YAML frontmatter`,
+    );
   }
   let frontmatter: unknown;
   try {
@@ -301,10 +360,17 @@ export const parseAgentFrontmatter = (
     );
   }
   if (!isRecord(frontmatter)) {
-    throw new PstackError("PSTACK_CONFIG_INVALID", `${filePath}: frontmatter must be a mapping`);
+    throw new PstackError(
+      "PSTACK_CONFIG_INVALID",
+      `${filePath}: frontmatter must be a mapping`,
+    );
   }
-  const name = typeof frontmatter.name === "string" ? frontmatter.name : undefined;
-  const description = typeof frontmatter.description === "string" ? frontmatter.description : undefined;
+  const name =
+    typeof frontmatter.name === "string" ? frontmatter.name : undefined;
+  const description =
+    typeof frontmatter.description === "string"
+      ? frontmatter.description
+      : undefined;
   if (name === undefined || description === undefined) {
     throw new PstackError(
       "PSTACK_CONFIG_INVALID",
@@ -313,8 +379,14 @@ export const parseAgentFrontmatter = (
   }
   const model = parseStringOrList(frontmatter.model, `${filePath}: model`);
   const tools = parseStringOrList(frontmatter.tools, `${filePath}: tools`);
+  const autoloadSkills = parseStringOrList(
+    frontmatter.autoloadSkills,
+    `${filePath}: autoloadSkills`,
+  );
   const spawns =
-    frontmatter.spawns === "*" ? "*" : parseStringOrList(frontmatter.spawns, `${filePath}: spawns`);
+    frontmatter.spawns === "*"
+      ? "*"
+      : parseStringOrList(frontmatter.spawns, `${filePath}: spawns`);
   const thinkingLevel =
     typeof frontmatter.thinkingLevel === "string"
       ? frontmatter.thinkingLevel
@@ -326,6 +398,7 @@ export const parseAgentFrontmatter = (
     description,
     ...(model !== undefined ? { model } : {}),
     ...(tools !== undefined ? { tools } : {}),
+    ...(autoloadSkills !== undefined ? { autoloadSkills } : {}),
     ...(spawns !== undefined ? { spawns } : {}),
     ...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
     body: match[2].replace(/^\r?\n/, ""),
@@ -335,16 +408,27 @@ export const parseAgentFrontmatter = (
 const isToolProfile = (value: unknown): value is ToolProfile =>
   (TOOL_PROFILES as readonly string[]).includes(value as string);
 
-const parseManifest = (raw: string, manifestPath: string): GeneratedAgentsManifest => {
+const parseManifest = (
+  raw: string,
+  manifestPath: string,
+): GeneratedAgentsManifest => {
   let value: unknown;
   try {
     value = JSON.parse(raw);
   } catch (error) {
-    throw new PstackError("PSTACK_MANIFEST_INVALID", `${manifestPath} is not valid JSON: ${String(error)}`, {
-      cause: error,
-    });
+    throw new PstackError(
+      "PSTACK_MANIFEST_INVALID",
+      `${manifestPath} is not valid JSON: ${String(error)}`,
+      {
+        cause: error,
+      },
+    );
   }
-  if (!isRecord(value) || value.schemaVersion !== PSTACK_SCHEMA_VERSION || !Array.isArray(value.entries)) {
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== PSTACK_SCHEMA_VERSION ||
+    !Array.isArray(value.entries)
+  ) {
     throw new PstackError(
       "PSTACK_MANIFEST_INVALID",
       `${manifestPath} must be { schemaVersion: ${PSTACK_SCHEMA_VERSION}, entries: [...] }`,
@@ -352,18 +436,24 @@ const parseManifest = (raw: string, manifestPath: string): GeneratedAgentsManife
   }
   const entries = value.entries.map((entry): GeneratedAgentEntry => {
     if (!isRecord(entry) || !isToolProfile(entry.toolProfile)) {
-      throw new PstackError("PSTACK_MANIFEST_INVALID", `${manifestPath} has an invalid manifest entry`);
+      throw new PstackError(
+        "PSTACK_MANIFEST_INVALID",
+        `${manifestPath} has an invalid manifest entry`,
+      );
     }
     if (
       typeof entry.file !== "string" ||
-      entry.file === "" ||
+      !/^pstack-[a-z0-9]+(?:-[a-z0-9]+)*\.md$/.test(entry.file) ||
       typeof entry.sha256 !== "string" ||
-      entry.sha256 === "" ||
+      !/^[a-f0-9]{64}$/.test(entry.sha256) ||
       typeof entry.semanticRole !== "string" ||
       entry.semanticRole === "" ||
       (entry.modelRole !== null && typeof entry.modelRole !== "string")
     ) {
-      throw new PstackError("PSTACK_MANIFEST_INVALID", `${manifestPath} has an invalid manifest entry`);
+      throw new PstackError(
+        "PSTACK_MANIFEST_INVALID",
+        `${manifestPath} has an invalid manifest entry`,
+      );
     }
     return {
       file: entry.file,
@@ -373,6 +463,12 @@ const parseManifest = (raw: string, manifestPath: string): GeneratedAgentsManife
       modelRole: entry.modelRole,
     };
   });
+  if (new Set(entries.map((entry) => entry.file)).size !== entries.length) {
+    throw new PstackError(
+      "PSTACK_MANIFEST_INVALID",
+      `${manifestPath} has duplicate manifest entries`,
+    );
+  }
   return { schemaVersion: PSTACK_SCHEMA_VERSION, entries };
 };
 
@@ -385,9 +481,13 @@ export const readGeneratedAgentManifest = async (
     raw = await readFile(manifestPath, "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw new PstackError("PSTACK_IO", `cannot read generated-agent manifest ${manifestPath}: ${String(error)}`, {
-      cause: error,
-    });
+    throw new PstackError(
+      "PSTACK_IO",
+      `cannot read generated-agent manifest ${manifestPath}: ${String(error)}`,
+      {
+        cause: error,
+      },
+    );
   }
   return parseManifest(raw, manifestPath);
 };
@@ -397,7 +497,9 @@ export const readGeneratedAgentManifest = async (
  * model-pinned role and panel seat, value = the exact configured selector
  * (including reasoning suffix). inherit-parent choices contribute no key.
  */
-export const buildSemanticModelRoles = (config: PstackConfig): Record<string, string> => {
+export const buildSemanticModelRoles = (
+  config: PstackConfig,
+): Record<string, string> => {
   const roles: Record<string, string> = {};
   for (const role of SCALAR_ROLES) {
     const choice = config.roles[role];
@@ -405,7 +507,8 @@ export const buildSemanticModelRoles = (config: PstackConfig): Record<string, st
   }
   for (const panel of PANEL_ROLES) {
     config.panels[panel].forEach((choice, index) => {
-      if (choice.type === "model") roles[panelSeatAgentName(panel, index + 1)] = choice.selector;
+      if (choice.type === "model")
+        roles[panelSeatAgentName(panel, index + 1)] = choice.selector;
     });
   }
   return roles;
@@ -430,6 +533,7 @@ type ApplyOp =
   | { kind: "manifest-write"; dest: string; backup: string | null };
 
 const undoOps = async (ops: ApplyOp[]): Promise<void> => {
+  const failures: unknown[] = [];
   for (const op of [...ops].reverse()) {
     try {
       if (op.kind === "create") {
@@ -440,10 +544,13 @@ const undoOps = async (ops: ApplyOp[]): Promise<void> => {
         if (op.backup !== null) await rename(op.backup, op.dest);
         else await unlink(op.dest);
       }
-    } catch {
-      // Best effort: undo of a partially applied op must not mask the failure.
+    } catch (error) {
+      if (!(op.kind === "create" && isErrno(error, "ENOENT")))
+        failures.push(error);
     }
   }
+  if (failures.length)
+    throw new AggregateError(failures, "generated agent rollback failed");
 };
 
 const isErrno = (error: unknown, code: string): boolean =>
@@ -465,11 +572,28 @@ export const applyGeneratedAgents = async (
   paths: PstackPaths,
   agents: GeneratedAgent[],
 ): Promise<AgentApplyResult> => {
-  const previous = await readGeneratedAgentManifest(paths.generatedManifestPath);
+  const previous = await readGeneratedAgentManifest(
+    paths.generatedManifestPath,
+  );
   const previousByFile = new Map<string, GeneratedAgentEntry>(
     (previous?.entries ?? []).map((entry) => [entry.file, entry]),
   );
   const owned = new Set(previousByFile.keys());
+  for (const entry of previousByFile.values()) {
+    const content = await readFile(
+      join(paths.generatedAgentsDir, entry.file),
+      "utf8",
+    ).catch((error) => {
+      if (isErrno(error, "ENOENT")) return null;
+      throw error;
+    });
+    if (content !== null && sha256Hex(content) !== entry.sha256) {
+      throw new PstackError(
+        "PSTACK_OWNERSHIP_CONFLICT",
+        `${entry.file} was modified since pstack generated it; refusing to replace or remove it`,
+      );
+    }
+  }
 
   // Ownership and freshness checks before any mutation.
   const existingByFile = new Map<string, string | null>();
@@ -480,7 +604,11 @@ export const applyGeneratedAgents = async (
       existing = await readFile(dest, "utf8");
     } catch (error) {
       if (!isErrno(error, "ENOENT")) {
-        throw new PstackError("PSTACK_IO", `cannot read ${dest}: ${String(error)}`, { cause: error });
+        throw new PstackError(
+          "PSTACK_IO",
+          `cannot read ${dest}: ${String(error)}`,
+          { cause: error },
+        );
       }
     }
     existingByFile.set(agent.file, existing);
@@ -509,10 +637,17 @@ export const applyGeneratedAgents = async (
     present = await readdir(paths.generatedAgentsDir);
   } catch (error) {
     if (!isErrno(error, "ENOENT")) {
-      throw new PstackError("PSTACK_IO", `cannot list ${paths.generatedAgentsDir}: ${String(error)}`, { cause: error });
+      throw new PstackError(
+        "PSTACK_IO",
+        `cannot list ${paths.generatedAgentsDir}: ${String(error)}`,
+        { cause: error },
+      );
     }
   }
-  const stray = present.filter((file) => file.startsWith("pstack-") && !owned.has(file) && !incoming.has(file));
+  const stray = present.filter(
+    (file) =>
+      file.startsWith("pstack-") && !owned.has(file) && !incoming.has(file),
+  );
   if (stray.length > 0) {
     throw new PstackError(
       "PSTACK_OWNERSHIP_CONFLICT",
@@ -558,7 +693,11 @@ export const applyGeneratedAgents = async (
         existing = await readFile(dest, "utf8");
       } catch (error) {
         if (!isErrno(error, "ENOENT")) {
-          throw new PstackError("PSTACK_IO", `cannot read ${dest}: ${String(error)}`, { cause: error });
+          throw new PstackError(
+            "PSTACK_IO",
+            `cannot read ${dest}: ${String(error)}`,
+            { cause: error },
+          );
         }
       }
       if (existing === null) continue;
@@ -579,37 +718,69 @@ export const applyGeneratedAgents = async (
       })),
     };
     const stagedManifest = join(staging, "generated-agents.json");
-    await writeFile(stagedManifest, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+    await writeFile(
+      stagedManifest,
+      `${JSON.stringify(manifest, null, 2)}\n`,
+      "utf8",
+    );
     let manifestBackup: string | null = null;
     let previousManifestRaw: string | null = null;
     try {
       previousManifestRaw = await readFile(paths.generatedManifestPath, "utf8");
     } catch (error) {
       if (!isErrno(error, "ENOENT")) {
-        throw new PstackError("PSTACK_IO", `cannot read ${paths.generatedManifestPath}: ${String(error)}`, {
-          cause: error,
-        });
+        throw new PstackError(
+          "PSTACK_IO",
+          `cannot read ${paths.generatedManifestPath}: ${String(error)}`,
+          {
+            cause: error,
+          },
+        );
       }
     }
     if (previousManifestRaw !== null) {
       manifestBackup = join(backupDir, "generated-agents.json");
       await writeFile(manifestBackup, previousManifestRaw, "utf8");
     }
-    ops.push({ kind: "manifest-write", dest: paths.generatedManifestPath, backup: manifestBackup });
+    ops.push({
+      kind: "manifest-write",
+      dest: paths.generatedManifestPath,
+      backup: manifestBackup,
+    });
     await rename(stagedManifest, paths.generatedManifestPath);
   } catch (error) {
-    await undoOps(ops);
+    try {
+      await undoOps(ops);
+    } catch (rollbackError) {
+      throw new PstackError(
+        "PSTACK_IO",
+        `agent apply failed: ${String(error)}; rollback failed: ${String(rollbackError)}. Backups retained at ${staging}`,
+        { cause: error },
+      );
+    }
     await rm(staging, { recursive: true, force: true });
-    throw new PstackError("PSTACK_IO", `failed to apply generated agents: ${String(error)}`, {
-      cause: error,
-    });
+    throw new PstackError(
+      "PSTACK_IO",
+      `failed to apply generated agents: ${String(error)}`,
+      {
+        cause: error,
+      },
+    );
   }
 
   let finalized = false;
   const rollback = async (): Promise<void> => {
     if (finalized) return;
     finalized = true;
-    await undoOps(ops);
+    try {
+      await undoOps(ops);
+    } catch (error) {
+      throw new PstackError(
+        "PSTACK_IO",
+        `rollback failed; backups retained at ${staging}`,
+        { cause: error },
+      );
+    }
     await rm(staging, { recursive: true, force: true });
   };
   const discard = async (): Promise<void> => {
@@ -617,5 +788,10 @@ export const applyGeneratedAgents = async (
     finalized = true;
     await rm(staging, { recursive: true, force: true });
   };
-  return { installed: agents.map((agent) => agent.file), removed: obsolete, rollback, discard };
+  return {
+    installed: agents.map((agent) => agent.file),
+    removed: obsolete,
+    rollback,
+    discard,
+  };
 };

@@ -1,6 +1,5 @@
 #!/usr/bin/env bun
 
-import { ensureDependenciesInstalled } from "../bootstrap.ts";
 import {
   NotFoundError,
   UsageError,
@@ -17,13 +16,12 @@ import {
   type Verdict,
 } from "./store.ts";
 
-ensureDependenciesInstalled();
-const {
-  Command: CommanderCommand,
+import {
+  Command as CommanderCommand,
   CommanderError,
   InvalidArgumentError,
   Option,
-} = await import("commander");
+} from "commander";
 type Command = InstanceType<typeof CommanderCommand>;
 
 const DISPLAY_LIMIT = 4;

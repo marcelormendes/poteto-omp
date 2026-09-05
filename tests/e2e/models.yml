@@ -1,40 +1,31 @@
-# Local acceptance input for /setup-pstack --file tests/e2e/models.yml.
-#
-# Selectors are the user's approved mapping, resolved against the authenticated
-# model registry at execution time (see the design's "Real separate-OMP
-# acceptance run"). This file is acceptance input, NOT a shipped default.
-#
-# Schema: schemaVersion 1; roles = exactly the 16 scalar roles; panels = exactly
-# the 5 panel roles with a non-empty seat list. Choice is
-# { type: model, selector: "<provider>/<id>[:level]" } or { type: inherit-parent }.
-#
-# NOTE (2026-09-04): pinned to provider/models present in the local registry
-# snapshot. `cursor/*` has no cached models; opencode-go carries api_key auth.
+# Local acceptance selectors verified against the authenticated OMP catalog.
+# This fixture is not a shipped default. Override it with PSTACK_TEST_MODELS.
+# Roles and panel seats retain exact provider/model[:thinking] assignments.
 schemaVersion: 1
 autoEnable: true
 roles:
-  feature: { type: model, selector: opencode-go/glm-5.3-flash }
-  refactoring: { type: model, selector: opencode-go/glm-5.3-flash }
-  bug-fix: { type: model, selector: opencode-go/deepseek-v4-flash }
-  perf-issue: { type: model, selector: opencode-go/deepseek-v4-flash }
-  hillclimb: { type: model, selector: opencode-go/glm-5.3 }
-  judgment-prose: { type: model, selector: opencode-go/glm-5.3 }
-  hardest: { type: model, selector: opencode-go/glm-5.3 }
-  how-explorer: { type: model, selector: opencode-go/glm-5.3-flash }
-  how-explainer: { type: model, selector: opencode-go/glm-5.3 }
-  why-investigator: { type: model, selector: opencode-go/glm-5.3-flash }
-  why-synthesizer: { type: model, selector: opencode-go/glm-5.3 }
-  reflect-tooling: { type: model, selector: opencode-go/deepseek-v4-flash }
-  reflect-judgment: { type: model, selector: opencode-go/glm-5.3 }
-  reflect-divergent: { type: model, selector: opencode-go/glm-5.3-flash }
-  reflect-synthesizer: { type: model, selector: opencode-go/glm-5.3 }
-  swarm-worker: { type: model, selector: opencode-go/glm-5.3-flash }
+  feature: { type: model, selector: opencode-go/glm-5.3-flash:low }
+  refactoring: { type: model, selector: opencode-go/glm-5.3-flash:low }
+  bug-fix: { type: model, selector: opencode-go/deepseek-v4-flash:low }
+  perf-issue: { type: model, selector: opencode-go/deepseek-v4-flash:low }
+  hillclimb: { type: model, selector: opencode-go/glm-5.3-flash:low }
+  judgment-prose: { type: model, selector: opencode-go/glm-5.3-flash:low }
+  hardest: { type: model, selector: opencode-go/glm-5.3-flash:low }
+  how-explorer: { type: model, selector: opencode-go/glm-5.3-flash:low }
+  how-explainer: { type: model, selector: opencode-go/glm-5.3-flash:low }
+  why-investigator: { type: model, selector: opencode-go/glm-5.3-flash:low }
+  why-synthesizer: { type: model, selector: opencode-go/glm-5.3-flash:low }
+  reflect-tooling: { type: model, selector: opencode-go/deepseek-v4-flash:low }
+  reflect-judgment: { type: model, selector: opencode-go/glm-5.3-flash:low }
+  reflect-divergent: { type: model, selector: opencode-go/glm-5.3-flash:low }
+  reflect-synthesizer: { type: model, selector: opencode-go/glm-5.3-flash:low }
+  swarm-worker: { type: model, selector: opencode-go/glm-5.3-flash:low }
 panels:
   how-critics: &panel
-    - { type: model, selector: opencode-go/deepseek-v4-flash-vision-exp:max }
-    - { type: model, selector: opencode-go/deepseek-v4-flash }
-    - { type: model, selector: opencode-go/glm-5.3-flash }
-    - { type: model, selector: opencode-go/glm-5.3 }
+    - { type: model, selector: openai-codex/gpt-5.6-sol:low }
+    - { type: model, selector: opencode-go/deepseek-v4-flash:low }
+    - { type: model, selector: opencode-go/glm-5.3-flash:low }
+    - { type: model, selector: openai-codex/gpt-5.6-luna:low }
   arena-runners: *panel
   arena-cross-judges: *panel
   architect-runners: *panel

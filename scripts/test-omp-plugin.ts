@@ -25,7 +25,7 @@
  *
  * Run: bun scripts/test-omp-plugin.ts [--dist <path>]
  */
-import { lstat, mkdtemp, mkdir, readFile, rm, writeFile, realpath, readdir } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, mkdir, readFile, rm, writeFile, realpath, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn } from "bun";
@@ -70,7 +70,7 @@ const SEED_PLAIN_FILES = ["config.yml", "kimi-device-id"];
 const SEED_DB_FILES = ["models.db", "agent.db"];
 
 async function snapshotDb(src: string, dst: string): Promise<void> {
-	const proc = spawn({ cmd: ["sqlite3", src, `.backup main '${dst}'`], stdout: "ignore", stderr: "pipe" });
+	const proc = spawn({ cmd: ["sqlite3", src, `.backup main '${dst.replaceAll("'", "''")}'`], stdout: "ignore", stderr: "pipe" });
 	const stderr = await new Response(proc.stderr as ReadableStream).text();
 	const code = await proc.exited;
 	if (code !== 0) throw new Error(`sqlite3 backup of ${src} failed: ${stderr}`);
@@ -78,13 +78,14 @@ async function snapshotDb(src: string, dst: string): Promise<void> {
 
 export async function seedProfile(profile: string): Promise<string> {
 	const agentDir = join(process.env.HOME ?? "/", ".omp", "profiles", profile, "agent");
-	await mkdir(join(agentDir, "sessions"), { recursive: true });
+	await mkdir(agentDir, { recursive: true, mode: 0o700 });
+	await mkdir(join(agentDir, "sessions"), { recursive: true, mode: 0o700 });
 	const real = await realpath(join(process.env.HOME ?? "/", ".omp", "agent")).catch(() => null);
 	if (!real) throw new PhaseFailure("link", "real OMP agent dir is missing; cannot seed models/auth");
 	for (const file of SEED_PLAIN_FILES) {
 		try {
 			const buffer = await Bun.file(join(real, file)).arrayBuffer();
-			await writeFile(join(agentDir, file), Buffer.from(buffer));
+			await writeFile(join(agentDir, file), Buffer.from(buffer), {mode: 0o600});
 		} catch {
 			// Optional files (kimi-device-id) may be absent; models/auth are verified below.
 		}
@@ -92,6 +93,7 @@ export async function seedProfile(profile: string): Promise<string> {
 	for (const file of SEED_DB_FILES) {
 		try {
 			await snapshotDb(join(real, file), join(agentDir, file));
+      await chmod(join(agentDir, file), 0o600);
 		} catch (error) {
 			throw new PhaseFailure("link", `cannot snapshot ${file}: ${error instanceof Error ? error.message : String(error)}`);
 		}
@@ -111,7 +113,7 @@ class PhaseFailure extends Error {
 
 async function runOmp(args: string[], env: Record<string, string> = {}): Promise<{ code: number; stdout: string; stderr: string }> {
 	const proc = spawn({
-		cmd: ["omp", ...args],
+		cmd: [process.env.PSTACK_OMP_BIN ?? "omp", ...args],
 		cwd: REPO_ROOT,
 		env: { ...process.env, ...env },
 		stdout: "pipe",

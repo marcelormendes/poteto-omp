@@ -35,47 +35,25 @@ Write one clear paragraph. Reviewers challenge whether the work achieves the int
 
 **Task panel (default).** Run the reviewers with one batched task call, one item per reviewer. Each item names the agent returned by pstack_route for its `pstack-interrogate-reviewers-<n>` seat and carries the same filled template as the task; read-only seats spawn with isolation disabled and never write to the repo.
 
-Use the `interrogate reviewers` seats bound by setup-pstack from the `modelRoles` entries in `~/.omp/agent/config.yml`, one pass per entry, extending or shrinking the seats below to the configured entry count; otherwise use the seat defaults.
-
-| Seat | Default model role |
-|------|------------|
-| Reviewer 1 | strongest judgment model (setup default) |
-| Reviewer 2 | second-family model |
-| Reviewer 3 | strongest judgment model (setup default), medium thinking |
-| Reviewer 4 | fast mechanical model (setup default) |
+Resolve `interrogate-reviewers` with `pstack_route` and use every configured seat. Setup defines their exact models; run `/setup-pstack` if resolution fails.
 
 For each run:
 
-`agent` is the seat's role agent returned by pstack_route; it resolves its own model from `modelRoles`, never a slug you invented. If a configured entry is `inherit-parent` or `auto`, the seat inherits the session model; record that in the verdict. Do not block the review on model availability.
+`agent` is the seat's role agent returned by pstack_route; it resolves its own model from `modelRoles`, never a slug you invented. If a configured entry is `inherit-parent`, the seat inherits the session model; record that in the verdict. Record failed seats as dropouts; never claim that their models reviewed the diff.
 
 ```js
 task({
-  context: "<same filled reviewer prompt for every run>",
+  context: "<stated intent, diff, and filled review rubric shared once>",
   tasks: [
-    { agent: "pstack-interrogate-reviewers-1", task: "<template>" },
-    { agent: "pstack-interrogate-reviewers-2", task: "<template>" },
+    { name: "review1", agent: "pstack-interrogate-reviewers-1", task: "Review the shared evidence against the shared rubric; return the required findings format." },
+    { name: "review2", agent: "pstack-interrogate-reviewers-2", task: "Review the shared evidence against the shared rubric; return the required findings format." },
   ],
 })
 ```
 
-Record which model each run resolved to, on the todo list (`pstack_todo` when present, else a markdown checklist).
+Record which model each run resolved to, on the todo list (OMP's `todo` tool).
 
 The batch keeps sibling items running when one blocks or fails.
-
-**Fallback: sequential passes (only when the role agents are not installed; run `setup-pstack` first).**
-
-Use the `interrogate reviewers` seats bound by setup-pstack from the `modelRoles` entries in `~/.omp/agent/config.yml`, one pass per entry, extending or shrinking the pass labels
-
-| Pass | Model role |
-|------|------------|
-| Pass 1 | strongest judgment model (setup default) |
-| Pass 2 | second-family model |
-| Pass 3 | fast mechanical model (setup default) |
-| Pass 4 | strongest judgment model (setup default) |
-
-For each pass:
-
-Run the review as a direct read-only pass under the current session model:
 
 Read `references/reviewer-prompt.md` and fill in the template with:
 

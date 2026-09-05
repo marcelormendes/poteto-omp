@@ -90,6 +90,8 @@ export const FORBIDDEN_STRING_PATTERNS: ReadonlyArray<{ label: string; needle: s
 	{ label: "pi-agent-path", needle: ".pi/agent" },
 	{ label: "pi-skills-path", needle: ".pi/skills" },
 	{ label: "pi-install", needle: "pi install" },
+  { label: "nonexistent-todo-tool", needle: "pstack_todo" },
+  { label: "nonexistent-memory-tool", needle: "pstack_memory" },
 ];
 
 export const FORBIDDEN_REGEX_PATTERNS: ReadonlyArray<ForbiddenPattern> = [
@@ -113,7 +115,7 @@ export const FORBIDDEN_REGEX_PATTERNS: ReadonlyArray<ForbiddenPattern> = [
 	{
 		label: "cursor-pi-cli-print",
 		// PI non-interactive invocation; OMP uses `omp`.
-		pattern: /\bpi\s+-p\b/,
+		pattern: /\bpi\s+(?:-p\b|--[a-z])/,
 	},
 ];
 
@@ -138,6 +140,7 @@ async function listFiles(root: string): Promise<string[]> {
 	const files: string[] = [];
 	const walk = async (dir: string): Promise<void> => {
 		for (const entry of await readdir(dir, { withFileTypes: true })) {
+      if (["node_modules", ".git", ".artifacts"].includes(entry.name)) continue;
 			const path = join(dir, entry.name);
 			if (entry.isDirectory()) {
 				await walk(path);
@@ -334,7 +337,7 @@ export async function buildPlugin(options: BuildOptions = {}): Promise<BuildRepo
 	];
 	try {
 		for (const [source, target] of copyRoots) {
-			await cp(source, join(staging, target), { recursive: true });
+			await cp(source, join(staging, target), { recursive: true, filter: path => !path.split(/[\\/]/).some(part => ["node_modules", ".git", ".artifacts"].includes(part)) });
 		}
 		await cp(licensePath, join(staging, "LICENSE"));
 		const readmePath = join(root, "README.md");

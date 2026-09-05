@@ -21,14 +21,14 @@ import type {
   ExtensionCommandContext,
   ExtensionContext,
 } from "@oh-my-pi/pi-coding-agent";
-import { Settings, getAgentDir } from "@oh-my-pi/pi-coding-agent";
+import { getAgentDir } from "@oh-my-pi/pi-coding-agent";
 import { configurePstack } from "../setup/service";
-import { parsePstackConfig, validateCompleteConfig } from "../setup/schema";
-import { bunConfigRunner } from "../setup/omp-config";
+import { parsePstackConfig, validateCompleteConfig, verifySetupChecksum } from "../setup/schema";
+import { bunConfigRunner, readConfigValue, readModelRoles } from "../setup/omp-config";
 import { isPstackError } from "../core/errors";
 import { isGeneratedAgentsManifest } from "../core/guards";
 import { parseYaml } from "../core/yaml";
-import { PANEL_ROLES, PSTACK_SCHEMA_VERSION, SCALAR_ROLES } from "../core/types";
+import { PANEL_ROLES, PSTACK_SCHEMA_VERSION, SCALAR_ROLES, UPSTREAM_COMMIT } from "../core/types";
 import type {
   GeneratedAgentsManifest,
   ModelChoice,
@@ -36,6 +36,7 @@ import type {
   PstackConfig,
   ScalarRole,
 } from "../core/types";
+import { parseModeCommand, parseSetupArgs } from "./commands";
 import { activePstackPaths } from "../core/paths";
 import {
   MODE_ENTRY,
@@ -46,7 +47,7 @@ import {
   withRouterLoaded,
 } from "./mode-state";
 import type { PstackModeState } from "./mode-state";
-import { buildFullRouter, buildReminder, buildRoutingRegistry } from "./router";
+import { buildFullRouter, buildReminder } from "./router";
 import { registerRouteTool } from "./route-tool";
 import { registerTranscriptTool } from "../transcripts/tool";
 import { inspectPstackStatus } from "./status";
@@ -154,7 +155,7 @@ const promptForConfig = async (
   }
   return {
     schemaVersion: PSTACK_SCHEMA_VERSION,
-    upstreamCommit: "",
+    upstreamCommit: UPSTREAM_COMMIT,
     autoEnable: true,
     roles,
     panels,
@@ -168,18 +169,6 @@ const readOptionalText = async (path: string): Promise<string | undefined> => {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
   }
-};
-
-const parseSetupArgs = (args: string): { file?: string } | { error: string } => {
-  const trimmed = args.trim();
-  if (trimmed === "") return {};
-  const fileMatch = /^--file(?:=|\s+)(.+)$/.exec(trimmed);
-  if (fileMatch === null) {
-    return {
-      error: `Unknown setup-pstack argument: ${trimmed}. Usage: /setup-pstack [--file models.yml]`,
-    };
-  }
-  return { file: fileMatch[1].trim() };
 };
 
 const formatSetupReport = (report: {
@@ -199,14 +188,9 @@ const formatSetupReport = (report: {
       : []),
   ];
   if (report.requiresNewSession) {
-    lines.push("- start a new session so OMP discovers the generated agents");
+    lines.push("- reloading OMP to discover the generated agents and model roles");
   }
   return lines.join("\n");
-};
-
-const capabilityReader = (): ((key: TaskCapabilityKey) => unknown) => {
-  const settings = Settings.instance;
-  return (key: TaskCapabilityKey) => settings.get(key);
 };
 
 const renderStatus = (report: Awaited<ReturnType<typeof inspectPstackStatus>>): string => {
@@ -268,7 +252,7 @@ export default function pstackExtension(pi: ExtensionAPI): void {
       config = undefined;
     } else {
       try {
-        config = parsePstackConfig(configText);
+        config = verifySetupChecksum(configText) ? parsePstackConfig(configText) : undefined;
       } catch (error) {
         pi.logger.error(
           `pstack: config unreadable: ${error instanceof Error ? error.message : String(error)}`,
@@ -333,10 +317,10 @@ export default function pstackExtension(pi: ExtensionAPI): void {
         }
         const report = await configurePstack({
           config: configInput,
-          deps: { models: ctx.models, runner: bunConfigRunner(), agentDir: getAgentDir() },
+          deps: { models: ctx.models, runner: bunConfigRunner(getAgentDir()), agentDir: getAgentDir() },
         });
-        await refreshRuntime(ctx);
         ctx.ui.notify(formatSetupReport(report), "info");
+        await ctx.reload();
       } catch (error) {
         ctx.ui.notify(
           isPstackError(error)
@@ -349,15 +333,16 @@ export default function pstackExtension(pi: ExtensionAPI): void {
   });
 
   pi.registerCommand("poteto-mode", {
-    description: "Toggle pstack automatic routing for this session (on|off|status)",
+    description: "Use poteto-mode for a task, or set on|off|status for this session",
     handler: async (args, ctx) => {
-      const action = (args ?? "").trim().toLowerCase() || "status";
-      if (action === "on" || action === "off") {
+      const command = parseModeCommand(args ?? "");
+      const action = command.action;
+      if (action !== "status") {
         if (config === undefined) {
           ctx.ui.notify("Pstack is not set up. Run /setup-pstack first.", "error");
           return;
         }
-        const enabled = action === "on";
+        const enabled = action !== "off";
         mode = {
           ...mode,
           enabled,
@@ -365,18 +350,19 @@ export default function pstackExtension(pi: ExtensionAPI): void {
           routerLoaded: enabled ? false : mode.routerLoaded,
         };
         pi.appendEntry(MODE_ENTRY, modeEntryData(enabled));
-        ctx.ui.notify(`Pstack mode ${action} for this session.`, "info");
+        if (command.action === "task") {
+          pi.sendUserMessage(`Read skill://poteto-mode and follow it for this task:
+
+${command.task}`);
+        } else {
+          ctx.ui.notify(`Pstack mode ${action} for this session.`, "info");
+        }
       } else if (action === "status") {
         ctx.ui.notify(
           config === undefined
             ? "Pstack mode is off (setup missing; run /setup-pstack)."
             : `Pstack mode is ${mode.enabled ? "on" : "off"} (source: ${mode.source}).`,
           "info",
-        );
-      } else {
-        ctx.ui.notify(
-          `Unknown poteto-mode argument: ${action}. Use on, off, or status.`,
-          "error",
         );
       }
     },
@@ -389,7 +375,11 @@ export default function pstackExtension(pi: ExtensionAPI): void {
       await refreshRuntime(ctx);
       let deps: Partial<StatusDependencies> = {};
       try {
-        deps = { getTaskValue: capabilityReader() };
+        const runner = bunConfigRunner(getAgentDir());
+        const keys: TaskCapabilityKey[] = ["task.batch", "task.maxConcurrency", "task.maxRecursionDepth", "task.isolation.enabled", "task.isolation.apply"];
+        const entries = await Promise.all(keys.map(async key => [key, await readConfigValue(runner, key)] as const));
+        const values = new Map(entries);
+        deps = { getTaskValue: key => values.get(key), getModelRoles: () => readModelRoles(runner) };
       } catch {
         deps = {};
       }
@@ -420,7 +410,7 @@ export default function pstackExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("before_agent_start", async (event) => {
-    if (!mode.enabled || config === undefined) return;
+    if (!mode.enabled || config === undefined || !pi.getActiveTools().includes("task")) return;
     if (!mode.routerLoaded) {
       mode = withRouterLoaded(mode, true);
       pi.appendEntry(ROUTER_ENTRY, routerEntryData(Date.now()));
@@ -431,7 +421,7 @@ export default function pstackExtension(pi: ExtensionAPI): void {
           display: false,
           details: {},
         },
-        systemPrompt: [...event.systemPrompt, "", buildRoutingRegistry(config)],
+        systemPrompt: [...event.systemPrompt],
       };
     }
     return { systemPrompt: [...event.systemPrompt, "", buildReminder(config, mode, manifest)] };

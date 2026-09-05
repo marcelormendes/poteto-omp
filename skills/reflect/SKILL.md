@@ -26,11 +26,11 @@ The agent finds its own session file before starting the passes. OMP stores sess
 
 Do not glob across other projects' session dirs. That crosses workspace boundaries and reads private chats from unrelated projects. Restrict the search to the current project's subdir (the `pstack_transcripts` extension tool resolves the current project automatically when present).
 
-For each candidate, read the first JSONL entry and check that the entry's message text contains the conversation's opening user prompt. Take the matching path. If no path resolves, write a tight digest of the session and pass that instead.
+For each candidate, inspect its user messages and match the conversation's opening prompt; OMP metadata records can precede the session header and messages. Take the matching path. If no path resolves, write a tight digest of the session and pass that instead.
 
 ### 2. Run three reviewers as a task-tool fan-out
 
-**Fan-out (default).** Launch the three lens reviewers with the task tool's batch form: one call carrying `context` (the shared background) and `tasks`, one item per lens. Each item names its role agent — `pstack-reflect-tooling`, `pstack-reflect-judgment`, `pstack-reflect-divergent` (role agents live in `~/.omp/agent/agents/`) — and carries the lens template as the task. The call is the barrier; results return in input order. The role agents are non-writing: their prompts forbid file writes; the parent applies edits. Never let a lens edit files.
+**Fan-out (default).** Launch the three lens reviewers with the task tool's batch form: one call carrying `context` (the shared background) and `tasks`, one item per lens. Each item names its role agent — `pstack-reflect-tooling`, `pstack-reflect-judgment`, `pstack-reflect-divergent` (role agents live in `~/.omp/agent/agents/`) — and carries the lens template as the task. The task call may return job IDs immediately. Wait through `hub` for all launched jobs before synthesizing; match results by job ID, not completion order. The role agents are non-writing: their prompts forbid file writes; the parent applies edits. Never let a lens edit files.
 
 | Lens | Role agent | Prompt template |
 |---|---|---|
@@ -38,7 +38,7 @@ For each candidate, read the first JSONL entry and check that the entry's messag
 | Tooling | `pstack-reflect-tooling` | `references/tooling-reviewer.md` |
 | Divergent | `pstack-reflect-divergent` | `references/divergent-reviewer.md` |
 
-Each role agent binds its model from the `modelRoles` entries in `~/.omp/agent/config.yml` (written by setup-pstack): the `reflect tooling` line for the tooling lens, the `reflect judgment, divergent, synthesizer` line for the judgment, divergent, and synthesizer seats. When a line is absent, use that role agent's pinned model (setup default). Never invent a model selector. If a configured value is `inherit-parent` or `auto`, use the role agent's pin and note it.
+Resolve all lens roles with `pstack_route`; it returns the configured agent and selector. An `inherit-parent` choice uses the current session model.
 
 Pass each template verbatim as the task, substituting the session path or digest where marked. Lens runs are read-only: they may call MCP tools and read the codebase, never write.
 
@@ -55,11 +55,12 @@ task({
 
 Record which model each seat ran under, and whether the session went by path or digest. If a reviewer drops out or returns `BLOCKED`, proceed with the remaining lenses and note the gap when synthesizing; the batch keeps sibling seats running when one lane blocks or fails. If the user configured one model for all three lenses, note it: lens diversity is weaker with one model.
 
-### 3. Synthesize (parent)
+### 3. Synthesize
 
-**Parent synthesis (default).** The parent performs the synthesis in its own session after the three lens reviewers return — do not launch a fourth subagent for it. Apply `references/synthesizer.md` verbatim, with each reviewer's full output inlined where marked. The quality check includes spot-verifying citations, which can require read-only context lookups (MCP or codebase). The synthesis returns a structured Accepted / Rejected / Backlog list; the parent owns the criteria judgments and the presentation to the user.
-
-This pass is judgment work. The parent runs it on its session model; if the session model differs from the configured synthesizer role (the `reflect judgment, divergent, synthesizer` line in `~/.omp/agent/config.yml`; default: strongest judgment model (setup default)), note the mismatch after the synthesis.
+Resolve `reflect-synthesizer` with `pstack_route`. After all three lenses
+settle, launch that role with `references/synthesizer.md` and their complete
+findings. It returns Accepted / Rejected / Backlog with evidence. The parent
+checks the judgments and owns the final presentation.
 
 ### 4. Structural enforcement check
 
@@ -69,7 +70,7 @@ Sanity-check the synthesizer's Accepted list. For any item that would be enforce
 
 Before applying any Accepted edit, present the synthesizer's full Accepted/Rejected/Backlog output to the user and wait for explicit approval. Ask in prose; the user picks which subset to apply and may redirect routings. Skill changes affect every future agent; do not auto-apply.
 
-Backlog items file to whatever devex / backlog tracker your team uses automatically. Those are tracker submissions, not skill edits. Only the Accepted list waits for approval.
+Keep backlog items in the report unless the user authorized filing them.
 
 For each approved Accepted item, follow the Routing field exactly:
 
@@ -88,21 +89,3 @@ Short list, no preamble:
 - New skills created: `<skill path>`. One line each (rare).
 - Backlog filed to the devex tracker: `<issue title>` (`<tags>`). One line each.
 - Dropped: one line per rejected finding + reason from the synthesizer.
-
-**Inline passes (only when the role agents are not installed; run `setup-pstack` first).**
-
-### 2. Run three reviewers as sequential passes
-
-One session, three numbered passes, one per lens. Each pass reads the session and applies its lens. Record which model each pass ran under. The prompts forbid file writes; the parent applies edits.
-
-| Lens | `model` | Prompt template |
-|---|---|---|
-| Judgment | your configured reflect-judgment model (default: strongest judgment model (setup default)) | `references/judgment-reviewer.md` |
-| Tooling | your configured reflect-tooling model (default: second-family model) | `references/tooling-reviewer.md` |
-| Divergent | your configured reflect-judgment model (default: strongest judgment model (setup default)) | `references/divergent-reviewer.md` |
-
-Pass each template verbatim, substituting the session path or digest where marked. Reviewers return findings in the pass output. If a configured model is `inherit-parent` or `auto`, run that pass on the current session model and note it. If the user keeps one model for all three passes, note it: lens diversity is weaker with one model.
-
-### 3. Synthesize
-
-One pass after the reviewers, using your configured reflect-judgment model (default: strongest judgment model (setup default)). The synthesizer's quality check includes spot-verifying citations, which can require context lookups. Use `references/synthesizer.md` verbatim, with each reviewer's full output inlined where marked. The synthesizer returns a structured Accepted / Rejected / Backlog list.

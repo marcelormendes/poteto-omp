@@ -182,6 +182,7 @@ describe("generateAgentFiles", () => {
 		expect(feature?.modelRole).toBe("@pstack-feature");
 		expect(feature?.semanticRole).toBe("feature");
 		expect(feature?.toolProfile).toBe("writing");
+		expect(parseAgentFrontmatter(feature!.content).autoloadSkills).toEqual(["poteto-mode"]);
 	});
 
 	test("panel seats carry the seat suffix on the semantic role and the @ model role", () => {
@@ -259,7 +260,7 @@ describe("readGeneratedAgentManifest", () => {
 					entries: [
 						{
 							file: "pstack-feature.md",
-							sha256: "abc123",
+							sha256: "a".repeat(64),
 							semanticRole: "feature",
 							toolProfile: "writing",
 							modelRole: "@pstack-feature",
@@ -272,7 +273,7 @@ describe("readGeneratedAgentManifest", () => {
 			expect(manifest?.entries).toHaveLength(1);
 			expect(manifest?.entries[0]).toMatchObject({
 				file: "pstack-feature.md",
-				sha256: "abc123",
+				sha256: "a".repeat(64),
 				semanticRole: "feature",
 				toolProfile: "writing",
 				modelRole: "@pstack-feature",

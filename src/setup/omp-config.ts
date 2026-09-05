@@ -22,9 +22,20 @@ export interface ConfigRunner {
 }
 
 /** Production runner: spawns the `omp` CLI on PATH. */
-export const bunConfigRunner = (): ConfigRunner => ({
+export const bunConfigRunner = (agentDir?: string): ConfigRunner => ({
   async run(args: string[]): Promise<ConfigRunnerResult> {
-    const proc = Bun.spawn(["omp", ...args], { stdout: "pipe", stderr: "pipe" });
+    const proc = Bun.spawn(["omp", ...args], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: agentDir
+        ? {
+            ...process.env,
+            OMP_PROFILE: "",
+            PI_PROFILE: "",
+            PI_CODING_AGENT_DIR: agentDir,
+          }
+        : process.env,
+    });
     const [stdout, stderr] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
@@ -35,13 +46,16 @@ export const bunConfigRunner = (): ConfigRunner => ({
 });
 
 /** Namespace ownership predicate for modelRoles keys. */
-export const isPstackModelRoleKey = (key: string): boolean => key.startsWith("pstack-");
+export const isPstackModelRoleKey = (key: string): boolean =>
+  key.startsWith("pstack-");
 
 /**
  * Read the current modelRoles map. A missing/unset value reads as an empty
  * map; malformed output fails closed.
  */
-export const readModelRoles = async (runner: ConfigRunner): Promise<Record<string, string>> => {
+export const readModelRoles = async (
+  runner: ConfigRunner,
+): Promise<Record<string, string>> => {
   const result = await runner.run(["config", "get", "modelRoles", "--json"]);
   if (result.exitCode !== 0) {
     throw new PstackError(
@@ -53,14 +67,21 @@ export const readModelRoles = async (runner: ConfigRunner): Promise<Record<strin
   try {
     payload = JSON.parse(result.stdout);
   } catch (error) {
-    throw new PstackError("PSTACK_IO", `omp config get modelRoles returned invalid JSON: ${String(error)}`, {
-      cause: error,
-    });
+    throw new PstackError(
+      "PSTACK_IO",
+      `omp config get modelRoles returned invalid JSON: ${String(error)}`,
+      {
+        cause: error,
+      },
+    );
   }
   const value = isRecord(payload) ? payload.value : undefined;
   if (value === undefined || value === null) return {};
   if (!isRecord(value)) {
-    throw new PstackError("PSTACK_IO", "omp config get modelRoles returned a non-record value");
+    throw new PstackError(
+      "PSTACK_IO",
+      "omp config get modelRoles returned a non-record value",
+    );
   }
   const roles: Record<string, string> = {};
   for (const [key, entry] of Object.entries(value)) {
@@ -72,8 +93,17 @@ export const readModelRoles = async (runner: ConfigRunner): Promise<Record<strin
   return roles;
 };
 
-const writeModelRoles = async (runner: ConfigRunner, roles: Record<string, string>): Promise<void> => {
-  const result = await runner.run(["config", "set", "modelRoles", JSON.stringify(roles), "--json"]);
+const writeModelRoles = async (
+  runner: ConfigRunner,
+  roles: Record<string, string>,
+): Promise<void> => {
+  const result = await runner.run([
+    "config",
+    "set",
+    "modelRoles",
+    JSON.stringify(roles),
+    "--json",
+  ]);
   if (result.exitCode !== 0) {
     throw new PstackError(
       "PSTACK_IO",
@@ -121,4 +151,40 @@ export const restoreModelRoles = async (
   }
   Object.assign(merged, previous);
   await writeModelRoles(runner, merged);
+};
+
+export const readConfigValue = async (
+  runner: ConfigRunner,
+  key: string,
+): Promise<unknown> => {
+  const result = await runner.run(["config", "get", key, "--json"]);
+  if (result.exitCode !== 0)
+    throw new PstackError(
+      "PSTACK_IO",
+      `cannot read OMP setting ${key}: ${result.stderr}`,
+    );
+  const payload: unknown = JSON.parse(result.stdout);
+  if (!isRecord(payload))
+    throw new PstackError(
+      "PSTACK_IO",
+      `invalid OMP setting response for ${key}`,
+    );
+  return payload.value;
+};
+
+export const writeConfigValue = async (
+  runner: ConfigRunner,
+  key: string,
+  value: unknown,
+): Promise<void> => {
+  const args =
+    value === undefined
+      ? ["config", "reset", key, "--json"]
+      : ["config", "set", key, JSON.stringify(value), "--json"];
+  const result = await runner.run(args);
+  if (result.exitCode !== 0)
+    throw new PstackError(
+      "PSTACK_IO",
+      `cannot write OMP setting ${key}: ${result.stderr}`,
+    );
 };

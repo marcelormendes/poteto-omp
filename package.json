@@ -5,27 +5,45 @@
   "type": "module",
   "description": "Lauren Tan's pstack methodology as an Oh My Pi package: skills, playbooks, role agents, and a routing extension",
   "license": "MIT",
-  "keywords": ["omp-package", "pstack", "agents", "workflow"],
+  "keywords": [
+    "omp-package",
+    "pstack",
+    "agents",
+    "workflow"
+  ],
   "omp": {
-    "extensions": ["./src/extension/index.ts"],
-    "skills": ["./skills"],
-    "agents": ["./agents"]
+    "extensions": [
+      "./src/extension/index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ],
+    "agents": [
+      "./agents"
+    ]
   },
   "scripts": {
-    "test": "bun test",
+    "test": "bun test ./tests/unit ./skills/poteto-mode/scripts",
     "typecheck": "tsc --noEmit",
     "build:plugin": "bun scripts/build-plugin.ts",
     "verify:generated": "bun scripts/verify-generated.ts",
     "test:omp": "bun scripts/test-omp-plugin.ts",
-    "test:e2e": "bun scripts/acceptance.ts"
+    "test:e2e": "bun scripts/acceptance.ts",
+    "test:package": "bun scripts/test-packed-plugin.ts",
+    "test:setup-ui": "bun scripts/test-setup-ui.ts"
   },
   "dependencies": {
-    "yaml": "^2.8.1"
+    "yaml": "^2.8.1",
+    "commander": "14.0.0"
   },
   "devDependencies": {
     "@oh-my-pi/pi-coding-agent": "18.1.10",
-    "commander": "14.0.0",
     "@types/bun": "latest",
-    "typescript": "latest"
+    "typescript": "latest",
+    "@oh-my-pi/pi-utils": "18.1.10"
+  },
+  "overrides": {
+    "adm-zip": "0.6.0",
+    "sharp": "0.35.0"
   }
 }
