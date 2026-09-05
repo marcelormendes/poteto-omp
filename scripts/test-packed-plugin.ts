@@ -19,7 +19,8 @@ async function main() {
   const scratch = await mkdtemp(join(tmpdir(), "pstack-package-"));
   const profile = `pstack-package-${process.pid}-${Date.now()}`;
   const profileDir = join(process.env.HOME!, ".omp/profiles", profile);
-  const reportPath = join(root, ".artifacts/package/report.json");
+  const installSpec = process.env.PSTACK_TEST_INSTALL_SPEC;
+  const reportPath = join(root, installSpec ? ".artifacts/registry/report.json" : ".artifacts/package/report.json");
   let driver: RpcDriver | undefined;
   let cwd: string | undefined;
   const report: Record<string, unknown> = { status: "fail", profile };
@@ -51,8 +52,13 @@ async function main() {
     // OMP 18.1.10's install command accepts registry names only. Install the
     // local tarball into its standard package store through Bun, then let OMP
     // discover and validate it exactly like a registry package.
-    const installed = await command(plugins, ["bun", "add", archive]);
-    if (installed.code) throw new Error(installed.stderr);
+    if (installSpec) {
+      await mustRunOmp(["plugin", "install", installSpec, "--json"], profile);
+      report.installSpec = installSpec;
+    } else {
+      const installed = await command(plugins, ["bun", "add", archive]);
+      if (installed.code) throw new Error(installed.stderr);
+    }
     const installedPath = await realpath(
       join(plugins, "node_modules/poteto-omp"),
     );
@@ -128,7 +134,7 @@ async function main() {
     throw error;
   } finally {
     await driver?.stop();
-    await mkdir(join(root, ".artifacts/package"), { recursive: true });
+    await mkdir(join(root, installSpec ? ".artifacts/registry" : ".artifacts/package"), { recursive: true });
     await writeFile(reportPath, JSON.stringify(report, null, 2) + "\n");
     await rm(profileDir, { recursive: true, force: true });
     await rm(scratch, { recursive: true, force: true });

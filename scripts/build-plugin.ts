@@ -354,7 +354,11 @@ export async function buildPlugin(options: BuildOptions = {}): Promise<BuildRepo
 	const distPackage = {
 		name: manifest.name,
 		version: manifest.version,
-		private: true,
+		publishConfig: { access: "public" },
+		homepage: "https://github.com/marcelormendes/poteto-omp#readme",
+		repository: { type: "git", url: "git+https://github.com/marcelormendes/poteto-omp.git" },
+		bugs: { url: "https://github.com/marcelormendes/poteto-omp/issues" },
+		engines: { bun: ">=1.3.14" },
 		type: manifest.type,
 		description: manifest.description,
 		license: manifest.license,

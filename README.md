@@ -9,7 +9,18 @@ extension. The methodology and original MIT-licensed material are Lauren's.
 The package is `poteto-omp`; `pstack-*` is its agent/configuration namespace.
 Upstream reference: pstack 0.14.8 at `93b00b89ef425a9c1bac0d0b317dfc49c930ac99`.
 
-## Local installation
+## Installation
+
+Install from GitHub:
+
+```bash
+omp plugin install github:marcelormendes/poteto-omp#v0.1.0
+omp
+```
+
+Then run `/setup-pstack` and `/pstack-status` inside OMP.
+
+### Install from source
 
 Requires OMP 18.1.10, Bun 1.3.14 or newer, Git, and authenticated model providers.
 GitHub workflows additionally need `gh`. Local workflows do not need a cloud
@@ -117,4 +128,4 @@ Environment overrides: `PSTACK_TEST_MODEL`, `PSTACK_TEST_MODELS`,
 `PSTACK_TEST_TIMEOUT_MS`, `PSTACK_TEST_CONCURRENCY` (default 2),
 `PSTACK_TEST_ARTIFACTS`, `PSTACK_TEST_PLUGIN`, and `PSTACK_OMP_BIN`.
 The [audit report](docs/audit.md) records findings and evidence.
-The repository remains private/unpublished until a separate release decision.
+Release notes and downloadable packages are available on [GitHub Releases](https://github.com/marcelormendes/poteto-omp/releases).
